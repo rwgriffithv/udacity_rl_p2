@@ -3,8 +3,7 @@ import numpy as np
 # a replay buffer containing consecutive transitions, grouped by trajectory
 # assumes constant-size trajectories, states, and actions
 # each trajectory has one extra state, corresponding to the "next state" of the final transition
-# transitions are sampled as consectuive groups (within a trajectory) without priority
-# future implementations may implement prioritized replay as needed
+# transitions are sampled as consectuive groups (within a trajectory) with priority
 class ConsecutiveReplayBuffer:
     def __init__(self, capacity, traj_size, sample_size, state_size, action_size):
         self.capacity = capacity # max number of trajectories to contain
@@ -49,24 +48,25 @@ class ConsecutiveReplayBuffer:
     # one transition per trajectory index, prob = probability to randomly sample one of the inserted transitions
     def insert_transitions(self, prob, states, actions, rewards, terminals):
         self._set_insert_trajectory_indices(len(rewards))
-        tran_idxs = [self.sizes[i] for i in self.traj_idxs]
-        singleton_idxs = [1] * len(self.traj_idxs)
-        self.states[[self.traj_idxs, tran_idxs]] = states
-        self.actions[[self.traj_idxs, tran_idxs]] = actions
-        self.rewards[[self.traj_idxs, tran_idxs, singleton_idxs]] = rewards
-        self.terminals[[self.traj_idxs, tran_idxs, singleton_idxs]] = terminals
+        tran_idxs = self.sizes[self.traj_idxs]
+        singleton_idxs = [0] * len(self.traj_idxs)
+        self.states[(self.traj_idxs, tran_idxs)] = states
+        self.actions[(self.traj_idxs, tran_idxs)] = actions
+        self.rewards[(self.traj_idxs, tran_idxs, singleton_idxs)] = rewards
+        self.terminals[(self.traj_idxs, tran_idxs, singleton_idxs)] = terminals
         # size and weight updates
         # mask weights out for transitions that end a trajectory and cannot be selected as starting a sample
-        tran_mask = np.array([1 if i < (self.traj_size - self.sample_size + 1) else 0 for i in tran_idxs])
+        tran_mask = tran_idxs < (self.traj_size - self.sample_size + 1)
         self.sizes[self.traj_idxs] += 1
         self.num_tran += len(self.traj_idxs)
-        prob = max(0.0, min(1.0, prob))
-        masked_probs = tran_mask * prob
+        # starting probability must be 1 if buffer is empty, also must be within [0,1]
+        prob = 1 if self.num_tran == len(self.traj_idxs) else max(0.0, min(1.0, prob))
+        masked_probs = tran_mask * (prob / max(1, np.sum(tran_mask)))
         self.weight_discount.fill(1 - prob)
         self.weights *= self.weight_discount
-        self.weights[[self.traj_idxs, tran_idxs]] = (1 / max(1, np.sum(tran_mask))) * masked_probs
+        self.weights[(self.traj_idxs, tran_idxs)] = masked_probs
         # leave trajectory probability at 0 until it has enough transitions to select a sample from
-        traj_mask = np.array([1 if i >= self.sample_size else 0 for i in tran_idxs])
+        traj_mask = tran_idxs >= (self.sample_size - 1)
         self.traj_weights[self.traj_idxs] = traj_mask * np.sum(self.weights[self.traj_idxs], axis=-1)
 
     # should only be invoked after inserting self.traj_size transitions into these trajectories
@@ -80,18 +80,25 @@ class ConsecutiveReplayBuffer:
     # each sample is a set of consecutive transitions
     # sample size determines the number of consecutive transitions
     def sample(self, num_samples):
+        # will return None if it does not have enough transitions yet to sample
+        # print("traj weights: ", self.traj_weights[:self.num_traj])
+        if self.num_tran // self.num_traj < self.sample_size:
+            print("Replay Buffer populating... not yet ready for sampling...")
+            # print("traj weights sum: %f" % np.sum(self.traj_weights))
+            return None
         # self.traj_weights[i] will be 0 for all trajectories without enough transitions to populate a full sample of self.sample_size
         traj_idxs = self.np_rng.choice(range(self.num_traj), size=num_samples, replace=True, p=self.traj_weights[:self.num_traj])
         tran_start_idxs = [self.np_rng.choice(range(self.sizes[i] - self.sample_size + 1)) for i in traj_idxs]
-        b_weights = self.weights[[traj_idxs, tran_start_idxs]]
-        # each sample from a trajectory will have self.sample_size transitions
-        traj_idxs = [i for i in traj_idxs for _ in range(self.sample_size)]
+        b_weights = self.weights[(traj_idxs, tran_start_idxs)]
         # each set of states is of size self.sample_size + 1 to include final next state
+        traj_state_idxs = [i for i in traj_idxs for _ in range(self.sample_size + 1)]
         tran_state_idxs = [i + j for i in tran_start_idxs for j in range(self.sample_size + 1)]
-        b_states = self.states[traj_idxs, tran_state_idxs]
+        b_states = self.states[(traj_state_idxs, tran_state_idxs)]
         # each set of actions, rewards, and terminals are only of size self.sample_size
+        traj_idxs = [i for i in traj_idxs for _ in range(self.sample_size)]
         tran_idxs = [i + j for i in tran_start_idxs for j in range(self.sample_size)]
-        b_actions = self.actions[traj_idxs, tran_idxs]
-        b_rewards = self.rewards[traj_idxs, tran_idxs]
-        b_terminals = self.terminals[traj_idxs, tran_idxs]
+        b_idxs = (traj_idxs, tran_idxs)
+        b_actions = self.actions[b_idxs]
+        b_rewards = self.rewards[b_idxs]
+        b_terminals = self.terminals[b_idxs]
         return b_states, b_actions, b_rewards, b_terminals, b_weights
