@@ -47,7 +47,7 @@ class D4PG:
             # get sample batch, convert numpy arrays to tensors and send to GPU
             batch_tuple = self.replay_buf.sample(num_samples)
             if batch_tuple is None:
-                print("Skipping optimization due to shallow replay buffer...")
+                # print("Skipping optimization due to shallow replay buffer...")
                 return
             np_states, np_actions, np_rewards, np_terminals, np_priorities = batch_tuple
             # TODO: may want to clamp rewards to -1, 1
@@ -80,11 +80,9 @@ class D4PG:
             np_start_actions = np_actions[[i * self.sample_size for i in range(num_samples)]] # extract first action
             start_states = torch.from_numpy(np_start_states).float().to(self.dev_gpu)
             start_actions = torch.from_numpy(np_start_actions).float().to(self.dev_gpu)
-            distq_loss = tnn.BCELoss(reduction='none')(tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1))), proj_targ_dist_probs.detach())
+            distq_loss = tnn.BCELoss(reduction='none')(tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1)), -1), proj_targ_dist_probs.detach())
             priorities = torch.from_numpy(np_priorities).float().to(self.dev_gpu)
             distq_loss = torch.sum(distq_loss, -1)
-            print("distq_loss shape", distq_loss.shape)
-            print("priorities shape", priorities.shape)
             distq_loss = torch.mean(distq_loss * priorities)
             # distq_loss = torch.sum(proj_targ_dist_probs.detach() * tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1)), -1), axis=-1)
             # print("distq_loss_1 nan: ", torch.isnan(distq_loss).any())
@@ -102,7 +100,6 @@ class D4PG:
             policy_out = self.policynet(start_states)
             # print("policy_out nan: ", torch.isnan(policy_out).any())
             distq_out = self.distqnet(torch.cat((start_states, policy_out), -1))
-            print("distq_out nan: ", torch.isnan(distq_out).any())
             policy_loss = -torch.mean(torch.sum(distq_out * self.distq_values, -1))
             # print("policy_loss nan: ", torch.isnan(policy_loss).any())
             

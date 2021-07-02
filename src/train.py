@@ -23,7 +23,7 @@ def train(executable_path):
     V_MIN = 0 # minimum value for distrbutional Q-network
     V_MAX = 0.1 # maximum value for distrbutional Q-network
     POLICY_LR = 0.0001 # small due to frequency of gradient steps
-    DISTQ_LR = 0.00000000001 # small due to frequency of gradient steps
+    DISTQ_LR = 0.0001 # small due to frequency of gradient steps
     DISCOUNT_FACTOR = 1
     POLYAK_FACTOR = 0.995 # large due to frequency of gradient steps
     NUM_GRAD_STEPS_PER_UPDATE = 1
@@ -32,9 +32,9 @@ def train(executable_path):
     EPSILON_MIN = 0.01
     EPSILON_MAX = 1.0
     EPSILON_DECAY = 0.99
-    PRIORITY_MIN = 0.05
-    PRIORITY_MAX = 0.5
-    PRIOIRTY_DECAY = 0.99
+    PRIORITY_MIN = 0.00000001
+    PRIORITY_MAX = 0.001
+    PRIOIRTY_DECAY = 0.999
     
     # instantiate environment
     env = UnityEnvironment(file_name=executable_path)
@@ -68,7 +68,7 @@ def train(executable_path):
         scores = np.zeros(num_agents)
         env_info = env.reset(train_mode=True)[brain_name]
         terminals = np.zeros(num_agents) # environment does not have a true end point where the agent will receive no more rewards
-        i = 0
+        # i = 0
         while True:
             done = False
             states = env_info.vector_observations
@@ -82,8 +82,8 @@ def train(executable_path):
                     break
             replay_buf.insert_transitions(priority, states, actions, rewards, terminals)
             d4pg.optimize(NUM_GRAD_STEPS_PER_UPDATE, BATCH_SIZE)
-            i += 1
-            print("completed episode step: %d" % i)
+            # i += 1
+            # print("completed episode step: %d" % i)
             scores += rewards # accumulate score
             if done:
                 end_states = env_info.vector_observations

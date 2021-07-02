@@ -33,8 +33,12 @@ class ConsecutiveReplayBuffer:
         num_append = min(num_trajectories, self.capacity - self.num_traj)
         self.traj_idxs = [self.num_traj + i for i in range(num_append)]
         num_insert = num_trajectories - num_append
-        inv_traj_weights = 1 - self.traj_weights
-        self.traj_idxs += self.np_rng.choice(range(num_insert), size=num_insert, replace=False, p=inv_traj_weights[:num_insert]).tolist()
+        inv_traj_weights = np.exp(1 - self.traj_weights[:self.num_traj])
+        inv_traj_weights /= np.sum(inv_traj_weights)
+        # print("_set_insert_trajectory_indices num_insert: %d" % num_insert)
+        # print("_set_insert_trajectory_indices inv_traj_weights: ", inv_traj_weights)
+        self.traj_idxs += self.np_rng.choice(range(self.num_traj), size=num_insert, replace=False, p=inv_traj_weights).tolist()
+        self.traj_idxs_init = True
         # size and weight updates
         self.sizes[self.traj_idxs] = 0
         self.num_traj += num_append
@@ -62,17 +66,20 @@ class ConsecutiveReplayBuffer:
         # starting probability must be 1 if buffer is empty, also must be within [0,1]
         prob = 1 if self.num_tran == len(self.traj_idxs) else max(0.0, min(1.0, prob))
         masked_probs = tran_mask * (prob / max(1, np.sum(tran_mask)))
+        prob = np.sum(masked_probs) # accounts for case when maksed_probs is all 0
         self.weight_discount.fill(1 - prob)
+        # print("weight discount: %f" % (1 - prob))
         self.weights *= self.weight_discount
         self.weights[(self.traj_idxs, tran_idxs)] = masked_probs
-        # leave trajectory probability at 0 until it has enough transitions to select a sample from
-        traj_mask = tran_idxs >= (self.sample_size - 1)
-        self.traj_weights[self.traj_idxs] = traj_mask * np.sum(self.weights[self.traj_idxs], axis=-1)
+        # update trajectory weights
+        # leave current trajectory probabilities at 0 until it has enough transitions to select a sample from
+        if np.sum(tran_idxs >= (self.sample_size - 1)) != 0:
+            self.traj_weights[range(self.num_traj)] = np.sum(self.weights[range(self.num_traj)], axis=-1)
 
     # should only be invoked after inserting self.traj_size transitions into these trajectories
     def append_end_states(self, states):
         # does not count as a full transition, no size increments or weight updates
-        self.states[[self.traj_idxs, [self.traj_size] * len(self.traj_idxs)]] = states
+        self.states[(self.traj_idxs, [self.traj_size] * len(self.traj_idxs))] = states
         # clear current trajectory indices
         self.traj_idxs = None
 
@@ -83,7 +90,7 @@ class ConsecutiveReplayBuffer:
         # will return None if it does not have enough transitions yet to sample
         # print("traj weights: ", self.traj_weights[:self.num_traj])
         if self.num_tran // self.num_traj < self.sample_size:
-            print("Replay Buffer populating... not yet ready for sampling...")
+            # print("Replay Buffer populating... not yet ready for sampling...")
             # print("traj weights sum: %f" % np.sum(self.traj_weights))
             return None
         # self.traj_weights[i] will be 0 for all trajectories without enough transitions to populate a full sample of self.sample_size
