@@ -22,10 +22,10 @@ class ConsecutiveReplayBuffer:
         self.actions = np.zeros((capacity, traj_size, action_size), np.dtype(float))
         self.rewards = np.zeros((capacity, traj_size, 1), np.dtype(float))
         self.terminals = np.zeros((capacity, traj_size, 1), np.dtype(int))
-        # for random sampling
-        self.np_rng = np.random.default_rng()
         # for tracking current trajectories being appended/inserted
         self.traj_idxs = None
+        # for random sampling
+        self.np_rng = np.random.default_rng()
 
     # set random indices to insert new trajectories into, should only be invoked internally
     def _set_insert_trajectory_indices(self, num_trajectories):
@@ -83,6 +83,7 @@ class ConsecutiveReplayBuffer:
         # self.traj_weights[i] will be 0 for all trajectories without enough transitions to populate a full sample of self.sample_size
         traj_idxs = self.np_rng.choice(range(self.num_traj), size=num_samples, replace=True, p=self.traj_weights[:self.num_traj])
         tran_start_idxs = [self.np_rng.choice(range(self.sizes[i] - self.sample_size + 1)) for i in traj_idxs]
+        b_weights = self.weights[[traj_idxs, tran_start_idxs]]
         # each sample from a trajectory will have self.sample_size transitions
         traj_idxs = [i for i in traj_idxs for _ in range(self.sample_size)]
         # each set of states is of size self.sample_size + 1 to include final next state
@@ -93,4 +94,4 @@ class ConsecutiveReplayBuffer:
         b_actions = self.actions[traj_idxs, tran_idxs]
         b_rewards = self.rewards[traj_idxs, tran_idxs]
         b_terminals = self.terminals[traj_idxs, tran_idxs]
-        return b_states, b_actions, b_rewards, b_terminals
+        return b_states, b_actions, b_rewards, b_terminals, b_weights
