@@ -7,8 +7,8 @@ from torch import save
 
 # local imports
 from .nn import build_actor_network, build_critic_network
-from .replay import ConsecutiveReplayBuffer
-from .d4pg import D4PG
+from .replay import ReplayBuffer
+from .ddpg import DDPG
 
 
 def train(executable_path):
@@ -16,25 +16,16 @@ def train(executable_path):
     MAX_NUM_EPISODES = 200 # must solve environment before this
     REQ_AVG_SCORE = 30
     # training constants
-    REPBUF_TRAJ_CAPCITY = int(1e4)
-    REPBUF_TRAN_PER_TRAJ = 501 # must match ceil(environment's true length / K) (K defined below)
-    SAMPLE_TRAJ_LENGTH = 25 # number of consecutive transitions that are taken as a sample from the replay buffer
-    NUM_ATOMS = 12 # number of discrete distribution points for distributional Q-network to learn
-    V_MIN = 0 # minimum value for distrbutional Q-network
-    V_MAX = 0.1 # maximum value for distrbutional Q-network
-    POLICY_LR = 0.001 # small due to frequency of gradient steps
-    DISTQ_LR = 0.001 # small due to frequency of gradient steps
-    DISCOUNT_FACTOR = 1
+    REPBUF_CAPCITY = int(1e5)
+    LEARNING_RATE = 0.0003 # small due to frequency of gradient steps
+    DISCOUNT_FACTOR = 0.99
     POLYAK_FACTOR = 0.975 # large due to frequency of gradient steps
-    NUM_GRAD_STEPS_PER_UPDATE = 1
+    NUM_GRAD_STEPS_PER_UPDATE = 2 # 10
     BATCH_SIZE = 128
-    K = 2 # number of simulation steps per RL algorithm step (taken from DeepQ)
+    K = 1 # number of simulation steps per RL algorithm step (taken from DeepQ)
     EPSILON_MIN = 0.01
     EPSILON_MAX = 1.0
-    EPSILON_DECAY = 0.95
-    PRIORITY_MIN = 0.0001
-    PRIORITY_MAX = 0.1
-    PRIOIRTY_DECAY = 0.999
+    EPSILON_DECAY = 0.98
     
     # instantiate environment
     env = UnityEnvironment(file_name=executable_path)
@@ -47,48 +38,47 @@ def train(executable_path):
     action_size = env.brains[brain_name].vector_action_space_size
     num_agents = len(env_info.agents)
     
-    # build sequential artificial neural networks for the policy, distributional Q-network, and their targets
-    policy = build_actor_network(state_size, action_size)
-    target_policy = build_actor_network(state_size, action_size)
-    distq = build_critic_network(state_size + action_size, NUM_ATOMS)
-    target_distq = build_critic_network(state_size + action_size, NUM_ATOMS)
+    # build sequential artificial neural networks for the actor, critic, and their target networks
+    actors = [build_actor_network(state_size, action_size) for _ in range(num_agents)]
+    target_actor = build_actor_network(state_size, action_size)
+    critics = [build_critic_network(state_size + action_size, 1) for _ in range(num_agents)]
+    target_critic = build_critic_network(state_size + action_size, 1)
 
     # replay buffer that allows for time-prioritized sampling with 
-    replay_buf = ConsecutiveReplayBuffer(REPBUF_TRAJ_CAPCITY, REPBUF_TRAN_PER_TRAJ, SAMPLE_TRAJ_LENGTH, state_size, action_size)
+    replay_buf = ReplayBuffer(REPBUF_CAPCITY, state_size, action_size)
 
-    # training using Distributed Distributional Deep Deterministic Policy Gradient (D4PG)
-    d4pg = D4PG(policy, distq, target_policy, target_distq, replay_buf, SAMPLE_TRAJ_LENGTH, V_MIN, V_MAX, NUM_ATOMS, POLICY_LR, DISTQ_LR, DISCOUNT_FACTOR, POLYAK_FACTOR)
+    # training using DDPG
+    ddpg = DDPG(actors, critics, target_actor, target_critic, replay_buf, LEARNING_RATE, DISCOUNT_FACTOR, POLYAK_FACTOR)
     scores_history = [] # list of arrays of sums of rewards for each agent throughout an episode
     scores_averages = [] # list of average of rewards across all agents through an episode, used to determine if the agent has solved the environment
     epsilon = EPSILON_MAX
-    priority = PRIORITY_MAX
     max_avg_score = int(-1e6)
-    print("\n\ntraining (K=%d, PLR=%f, QLR=%f, BS=%d, ED=%f) ...." % (K, POLICY_LR, DISTQ_LR, BATCH_SIZE, EPSILON_DECAY))
+    print("\n\ntraining (K=%d, LR=%f, BS=%d, ED=%f) ...." % (K, LEARNING_RATE, BATCH_SIZE, EPSILON_DECAY))
     while len(scores_averages) < MAX_NUM_EPISODES:
         scores = np.zeros(num_agents)
         env_info = env.reset(train_mode=True)[brain_name]
+        states = env_info.vector_observations
         terminals = np.zeros(num_agents) # environment does not have a true end point where the agent will receive no more rewards
         i = 0
         while True:
             done = False
-            states = env_info.vector_observations
-            actions = d4pg.get_actions(states, epsilon)
+            actions = ddpg.get_actions(states, epsilon)
             rewards = np.zeros(num_agents)
             for _ in range(K):
                 env_info = env.step(actions)[brain_name]
                 rewards += env_info.rewards
+                next_states = env_info.vector_observations
                 done = np.any(env_info.local_done)
                 if done: # check if episode is done
                     break
-            replay_buf.insert_transitions(priority, states, actions, rewards, terminals)
+            replay_buf.insert(states, actions, rewards[:,np.newaxis], terminals[:,np.newaxis], next_states)
             if i % 20 == 0:
-                d4pg.optimize(NUM_GRAD_STEPS_PER_UPDATE, BATCH_SIZE)
+                ddpg.optimize(NUM_GRAD_STEPS_PER_UPDATE, BATCH_SIZE)
+            states = next_states
             i += 1
             # print("completed episode step: %d" % i)
             scores += rewards # accumulate score
             if done:
-                end_states = env_info.vector_observations
-                replay_buf.append_end_states(end_states)
                 break
         # check for environment being solved
         scores_history.append(scores)
@@ -100,7 +90,6 @@ def train(executable_path):
             break
         max_avg_score = max(max_avg_score, avg_score)
         epsilon = max(epsilon * EPSILON_DECAY, EPSILON_MIN)
-        priority = max(priority * PRIOIRTY_DECAY, PRIORITY_MIN)
 
     env.close()
     # save models and plot final rewards curve
@@ -109,8 +98,9 @@ def train(executable_path):
         f.write(str(scores_history.flatten())[1:-1])
     with open("scores_avg.csv" "w") as f:
         f.write(str(scores_averages)[1:-1])
-    save(policy.state_dict(), "policy.pt")
-    save(distq.state_dict(), "distq.pt")
+    for i, (a, c) in enumerate(zip(actors, critics)):
+        save(a.state_dict(), "actor_%d.pt" % i)
+        save(c.state_dict(), "critic_%d.pt" % i)
 
 
 if __name__ == "__main__":
