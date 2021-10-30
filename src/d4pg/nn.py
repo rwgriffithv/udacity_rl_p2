@@ -13,8 +13,6 @@ def build_actor_network(input_size, output_size):
         tnn.ReLU(),
         tnn.Linear(256, 256),
         tnn.ReLU(),
-        tnn.Linear(256, 256),
-        tnn.ReLU(),
         tnn.Linear(256, output_size)
     )
     return net.float().to(device)
@@ -23,8 +21,6 @@ def build_critic_network(input_size, output_size):
     device = torch.device("cuda" if tcuda.is_available() else "cpu")
     net = tnn.Sequential(
         tnn.Linear(input_size, 256),
-        tnn.ReLU(),
-        tnn.Linear(256, 256),
         tnn.ReLU(),
         tnn.Linear(256, 256),
         tnn.ReLU(),
