@@ -42,6 +42,8 @@ class D4PG:
         self.distq_values = torch.from_numpy(np.array([v_min + i * value_delta for i in range(num_atoms)])).float().to(self.dev_gpu)
         # for random action noise
         self.np_rng = np.random.default_rng()
+        self.dbg_print_counter = 0
+        self.dbg_print_period = 100
 
     def optimize(self, num_steps, num_samples):
         for _ in range(num_steps): # number of gradient steps
@@ -56,12 +58,13 @@ class D4PG:
             
             # calculate distributional q-network loss
             self.distqnet.train(True) # ensure qnet is training so back propogation can occur
-            reward_discount = np.array([self.raw_discount_factor**i for i in range(self.sample_size)])
-            discounted_rewards = torch.from_numpy(np.array([np.sum(np_rewards[i * self.sample_size : (i + 1) * self.sample_size] * reward_discount) for i in range(num_samples)])).float().to(self.dev_gpu).unsqueeze(1)
+            np_reward_discount = np.array([[self.raw_discount_factor**i] for i in range(self.sample_size)]) # match dimensionality of rewards
+            np_discounted_rewards = np.array([[np.sum(np_rewards[i * self.sample_size : (i + 1) * self.sample_size] * np_reward_discount)] for i in range(num_samples)])
+            discounted_rewards = torch.from_numpy(np_discounted_rewards).float().to(self.dev_gpu)
             np_end_terminal_check = 1 - np_terminals[[(i + 1) * self.sample_size - 1 for i in range(num_samples)]]
             end_terminal_check = torch.from_numpy(np_end_terminal_check).float().to(self.dev_gpu)
             # calculate target values for each sample of transitions using target values from Q distribution summed with discounted rewards
-            np_end_states = np_states[[i * (self.sample_size + 1) + self.sample_size for i in range(num_samples)]] # extract final end states from each sample of consecutive transitions
+            np_end_states = np_states[[(i + 1) * (self.sample_size + 1) - 1 for i in range(num_samples)]] # extract final end states from each sample of consecutive transitions
             end_states = torch.from_numpy(np_end_states).float().to(self.dev_gpu)
             targ_dist_probs = tnn.functional.softmax(self.target_distqnet(torch.cat((end_states, self.target_policynet(end_states)), -1)), -1)
             sample_size = torch.tensor(self.sample_size).float().to(self.dev_gpu)
@@ -70,16 +73,14 @@ class D4PG:
             np_targ_dist_probs = targ_dist_probs.detach().to(self.dev_cpu).numpy()
             np_targ_dist_values = targ_dist_values.detach().to(self.dev_cpu).numpy()
             np_proj_targ_dist_probs = categorical_projection(self.v_min, self.v_max, self.num_atoms, np_targ_dist_probs, np_targ_dist_values)
-            # print("np_proj_targ_dist_probs: ", np_proj_targ_dist_probs)
-            # print("np_proj_targ_dist_probs sums: ", np.sum(np_proj_targ_dist_probs[:4], axis=-1))
             proj_targ_dist_probs = torch.from_numpy(np_proj_targ_dist_probs).float().to(self.dev_gpu)
-            # print("proj_targ_dist_probs nan: ", torch.isnan(proj_targ_dist_probs).any())
             # the loss is calculated as cross-entropy, according to Appendix A
             np_start_states = np_states[[i * (self.sample_size + 1) for i in range(num_samples)]]  # extract first state frome each sample of consecutive transitions
             np_start_actions = np_actions[[i * self.sample_size for i in range(num_samples)]] # extract first action
             start_states = torch.from_numpy(np_start_states).float().to(self.dev_gpu)
             start_actions = torch.from_numpy(np_start_actions).float().to(self.dev_gpu)
-            distq_loss = tnn.BCELoss(reduction='none')(tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1)), -1), proj_targ_dist_probs.detach())
+            distq_probs = tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1)), -1)
+            distq_loss = tnn.BCELoss(reduction='none')(distq_probs, proj_targ_dist_probs.detach())
             # priorities = torch.from_numpy(np_priorities).float().to(self.dev_gpu)
             distq_loss = torch.sum(distq_loss, -1) # * priorities
             distq_loss = torch.mean(distq_loss)
@@ -91,11 +92,13 @@ class D4PG:
             self.distq_optimizer.zero_grad() # zero/clear previous gradients
             distq_loss.backward()
             self.distq_optimizer.step()
+            self.distqnet.train(False)
             
             # calculate policy-network loss, simple average expected value from policy-output-actions at each starting state
             self.policynet.train(True)
             policy_out = self.policynet(start_states)
-            expectedq = torch.sum(tnn.functional.softmax(self.distqnet(torch.cat((start_states, policy_out), -1)), -1) * self.distq_values, -1)
+            distq_probs = tnn.functional.softmax(self.distqnet(torch.cat((start_states, policy_out), -1)), -1)
+            expectedq = torch.sum(distq_probs * self.distq_values, -1)
             policy_loss = -torch.mean(expectedq) # maximize expected q-value
             if torch.isnan(policy_loss).any():
                 print("ERROR: policy_loss contains NaNs, exiting")
@@ -105,6 +108,15 @@ class D4PG:
             self.policy_optimizer.zero_grad()
             policy_loss.backward()
             self.policy_optimizer.step()
+            self.policynet.train(False)
+            
+            if self.dbg_print_counter == 0:
+                print("\n")
+                print("policy distq_probs: ", distq_probs.detach().to(self.dev_cpu).numpy()[0])
+                print("expectedq: ", expectedq.detach().to(self.dev_cpu).numpy()[0])
+                print("distq_loss: %f,\tpolicy_loss: %f" % (distq_loss.detach().to(self.dev_cpu).numpy(), policy_loss.detach().to(self.dev_cpu).numpy()))
+                print("\n")
+            self.dbg_print_counter = (self.dbg_print_counter + 1) % self.dbg_print_period
             
         # polyak update target networks
         polyak_update(self.distqnet, self.target_distqnet, self.polyak_factor)
@@ -115,6 +127,6 @@ class D4PG:
         self.policynet.train(False)
         with torch.no_grad():
             actions = torch.tanh(self.policynet(policy_in)).to(self.dev_cpu).numpy()
-        # epsilon noise and clipping
-        noise = epsilon * self.np_rng.random(actions.shape[1])
-        return np.clip(actions + noise, -1, 1)
+        # epsilon noise
+        noise = epsilon * (2 * self.np_rng.random((len(states), actions.shape[1])) - (1 + actions))
+        return actions + noise
