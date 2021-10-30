@@ -95,7 +95,7 @@ class D4PG:
             # calculate policy-network loss, simple average expected value from policy-output-actions at each starting state
             self.policynet.train(True)
             policy_out = self.policynet(start_states)
-            expectedq = torch.sum(tnn.functional.softmax(self.distqnet(torch.cat((start_states, policy_out), -1))) * self.distq_values, -1)
+            expectedq = torch.sum(tnn.functional.softmax(self.distqnet(torch.cat((start_states, policy_out), -1)), -1) * self.distq_values, -1)
             policy_loss = -torch.mean(expectedq) # maximize expected q-value
             if torch.isnan(policy_loss).any():
                 print("ERROR: policy_loss contains NaNs, exiting")
