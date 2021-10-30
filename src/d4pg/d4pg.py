@@ -81,8 +81,9 @@ class D4PG:
             start_actions = torch.from_numpy(np_start_actions).float().to(self.dev_gpu)
             distq_probs = tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1)), -1)
             distq_loss = tnn.BCELoss(reduction='none')(distq_probs, proj_targ_dist_probs.detach())
-            # priorities = torch.from_numpy(np_priorities).float().to(self.dev_gpu)
-            distq_loss = torch.sum(distq_loss, -1) # * priorities
+            np_scaled_priorities = 1 / (self.replay_buf.get_num_samples() * np_priorities)
+            priorities = torch.from_numpy(np_scaled_priorities).float().to(self.dev_gpu)
+            distq_loss = torch.sum(distq_loss, -1) * priorities
             distq_loss = torch.mean(distq_loss)
             if torch.isnan(distq_loss).any():
                 print("ERROR: distq_loss contains NaNs, exiting")
@@ -112,6 +113,10 @@ class D4PG:
             
             if self.dbg_print_counter == 0:
                 print("\n")
+                # print("np_priorities: ", np_priorities)
+                # print("np_scaled_priorities: ", np_scaled_priorities)
+                print("num samples in buffer: %d" % self.replay_buf.get_num_samples())
+                print("np_scaled_priorities mean: ", np.mean(np_scaled_priorities))
                 print("policy distq_probs: ", distq_probs.detach().to(self.dev_cpu).numpy()[0])
                 print("expectedq: ", expectedq.detach().to(self.dev_cpu).numpy()[0])
                 print("distq_loss: %f,\tpolicy_loss: %f" % (distq_loss.detach().to(self.dev_cpu).numpy(), policy_loss.detach().to(self.dev_cpu).numpy()))

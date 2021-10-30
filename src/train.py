@@ -16,25 +16,26 @@ def train(executable_path):
     MAX_NUM_EPISODES = 1000 # must solve environment before this
     REQ_AVG_SCORE = 30
     # training constants
-    REPBUF_TRAJ_CAPCITY = int(1e4)
-    REPBUF_TRAN_PER_TRAJ = 201 # must match ceil(environment's true length / K) (K defined below)
+    REPBUF_TRAJ_CAPCITY = 200 # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
+    REPBUF_TRAN_PER_TRAJ = 501 # must match ceil(environment's true length / K) (K defined below)
     SAMPLE_TRAJ_LENGTH = 5 # number of consecutive transitions that are taken as a sample from the replay buffer
-    NUM_ATOMS = 12 # number of discrete distribution points for distributional Q-network to learn
-    V_MIN = 0.00001 # minimum value for distrbutional Q-network, not zero to prevent zero policy gradients
-    V_MAX = 0.12 # maximum value for distrbutional Q-network
-    POLICY_LR = 0.0001 # small due to frequency of gradient steps
-    DISTQ_LR = 0.0001 # small due to frequency of gradient steps
+    NUM_ATOMS = 24 # number of discrete distribution points for distributional Q-network to learn
+    V_MIN = 1e-7 # minimum value for distrbutional Q-network, non-zero to avoid zero policy gradient coefficients
+    V_MAX = 0.1 # maximum value for distrbutional Q-network
+    POLICY_LR = 0.001 # small due to frequency of gradient steps
+    DISTQ_LR = 0.001 # small due to frequency of gradient steps
     DISCOUNT_FACTOR = 0.5 # should inversely correlate with SAMPLE_TRAJ_LENGTH
     POLYAK_FACTOR = 0.99 # large due to frequency of gradient steps
-    NUM_GRAD_STEPS_PER_UPDATE = 1
+    NUM_GRAD_STEPS_PER_UPDATE = 2
     BATCH_SIZE = 256
-    K = 5 # number of simulation steps per RL algorithm step (taken from DeepQ)
+    K = 2 # number of simulation steps per RL algorithm step (taken from DeepQ)
     EPSILON_MIN = 0.01
     EPSILON_MAX = 1.0
     EPSILON_DECAY = 0.95
-    PRIORITY_MIN = 0.0001
-    PRIORITY_MAX = 0.1
-    PRIOIRTY_DECAY = 0.99
+    PRIORITY_MIN = 0.0001 / BATCH_SIZE
+    PRIORITY_MAX = 0.01 / BATCH_SIZE
+    PRIOIRTY_DECAY = 0.999
+    PRIORITY_REWARD_FACTOR = 10
     
     # instantiate environment
     env = UnityEnvironment(file_name=executable_path)
@@ -53,7 +54,7 @@ def train(executable_path):
     distq = build_critic_network(state_size + action_size, NUM_ATOMS)
     target_distq = build_critic_network(state_size + action_size, NUM_ATOMS)
 
-    # replay buffer that allows for time-prioritized sampling with 
+    # replay buffer that allows for prioritized sampling and the sampling of consecutive transitions
     replay_buf = ConsecutiveReplayBuffer(REPBUF_TRAJ_CAPCITY, REPBUF_TRAN_PER_TRAJ, SAMPLE_TRAJ_LENGTH, state_size, action_size)
 
     # training using Distributed Distributional Deep Deterministic Policy Gradient (D4PG)
@@ -79,7 +80,10 @@ def train(executable_path):
                 done = np.any(env_info.local_done)
                 if done: # check if episode is done
                     break
-            replay_buf.insert_transitions(priority, states, actions, rewards, terminals)
+            prf_mask = rewards > 0
+            priorities = np.full(num_agents, priority / num_agents)
+            priorities[prf_mask] *= PRIORITY_REWARD_FACTOR
+            replay_buf.insert_transitions(priorities, states, actions, rewards, terminals)
             d4pg.optimize(NUM_GRAD_STEPS_PER_UPDATE, BATCH_SIZE)
             scores += rewards # accumulate score
             if done:
