@@ -32,20 +32,16 @@ class ConsecutiveReplayBuffer:
         num_append = min(num_trajectories, self.capacity - self.num_traj)
         self.traj_idxs = [self.num_traj + i for i in range(num_append)]
         num_insert = num_trajectories - num_append
-        inv_traj_weights = np.exp(1 - self.traj_weights[:self.num_traj])
-        inv_traj_weights /= np.sum(inv_traj_weights)
-        # print("_set_insert_trajectory_indices num_insert: %d" % num_insert)
-        # print("_set_insert_trajectory_indices inv_traj_weights: ", inv_traj_weights)
-        self.traj_idxs += self.np_rng.choice(range(self.num_traj), size=num_insert, replace=False, p=inv_traj_weights).tolist()
-        self.traj_idxs_init = True
-        # size and weight updates
+        if num_insert != 0:
+            inv_traj_weights = np.exp(1 - self.traj_weights[:self.num_traj])
+            inv_traj_weights /= np.sum(inv_traj_weights)
+            self.traj_idxs += self.np_rng.choice(range(self.num_traj), size=num_insert, replace=False, p=inv_traj_weights).tolist()
+            self.num_tran -= num_insert * self.traj_size
+            self.weights /= (1 - np.sum(self.weights[self.traj_idxs]))
+            self.weights[self.traj_idxs] = 0
+            self.traj_weights = np.sum(self.weights, axis=-1)
         self.sizes[self.traj_idxs] = 0
         self.num_traj += num_append
-        if num_insert != 0:
-            self.num_tran -= num_insert * self.traj_size
-            self.weights *= 1 / (1 - np.sum(self.weights[self.traj_idxs]))
-            self.weights[self.traj_idxs].fill(0)
-            self.traj_weights = np.sum(self.weights, axis=-1)
 
     # one transition per trajectory index, prob = probability to randomly sample one of the inserted transitions
     def insert_transitions(self, probs, states, actions, rewards, terminals):
@@ -99,17 +95,14 @@ class ConsecutiveReplayBuffer:
     # sample size determines the number of consecutive transitions
     def sample(self, num_samples):
         # will return None if it does not have enough transitions yet to sample
-        # print("traj weights: ", self.traj_weights[:self.num_traj])
         if self.get_num_samples() < self.sample_size:
             return None
         # self.traj_weights[i] will be 0 for all trajectories without enough transitions to populate a full sample of self.sample_size
-        try:
-            traj_idxs = self.np_rng.choice(range(self.num_traj), size=num_samples, replace=True, p=self.traj_weights[:self.num_traj])
-        except ValueError:
-            print("traj_weights: ", self.traj_weights[:self.num_traj])
-            print("sum of weights: ", np.sum(self.traj_weights))
-            raise
-        tran_start_idxs = [self.np_rng.choice(range(self.sizes[i] - (self.sample_size - 1))) for i in traj_idxs] # TODO: use weights here
+        traj_idxs = self.np_rng.choice(range(self.num_traj), size=num_samples, replace=True, p=self.traj_weights[:self.num_traj])
+        tran_weights = [self.weights[i, :(self.sizes[i] - (self.sample_size - 1))] for i in traj_idxs]
+        tran_weights = [t_w / np.sum(t_w) for t_w in tran_weights]
+        tran_start_idxs = [self.np_rng.choice(range(len(t_w)), p=t_w) for t_w in tran_weights]
+        # using idxs, get batch values
         b_weights = self.weights[(traj_idxs, tran_start_idxs)]
         # each set of states is of size self.sample_size + 1 to include final next state
         traj_state_idxs = [i for i in traj_idxs for _ in range(self.sample_size + 1)]

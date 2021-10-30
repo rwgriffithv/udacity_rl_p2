@@ -22,8 +22,8 @@ def train(executable_path):
     NUM_ATOMS = 24 # number of discrete distribution points for distributional Q-network to learn
     V_MIN = 1e-7 # minimum value for distrbutional Q-network, non-zero to avoid zero policy gradient coefficients
     V_MAX = 0.1 # maximum value for distrbutional Q-network
-    POLICY_LR = 0.001 # small due to frequency of gradient steps
-    DISTQ_LR = 0.001 # small due to frequency of gradient steps
+    POLICY_LR = 0.0001 # small due to frequency of gradient steps
+    DISTQ_LR = 0.0001 # small due to frequency of gradient steps
     DISCOUNT_FACTOR = 0.5 # should inversely correlate with SAMPLE_TRAJ_LENGTH
     POLYAK_FACTOR = 0.99 # large due to frequency of gradient steps
     NUM_GRAD_STEPS_PER_UPDATE = 2
