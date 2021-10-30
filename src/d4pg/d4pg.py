@@ -66,14 +66,15 @@ class D4PG:
             targ_dist_probs = tnn.functional.softmax(self.target_distqnet(torch.cat((end_states, self.target_policynet(end_states)), -1)), -1)
             # print("targ_dist_probs nan: ", torch.isnan(targ_dist_probs).any())
             sample_size = torch.tensor(self.sample_size).float().to(self.dev_gpu)
-            targ_dist_values = discounted_rewards + self.discount_factor.pow(sample_size) * end_terminal_check * (targ_dist_probs * self.distq_values)
+            targ_dist_values = discounted_rewards + self.discount_factor.pow(sample_size) * end_terminal_check * self.distq_values # to get expected value, multiply by targ_dist_probs and reduce sum
             # print("targ_dist_values nan: ", torch.isnan(targ_dist_values).any())
             # apply categorical projection h_zi(z) from Appendix B to target distrbution values and probabilities to get projected target distribution probabilities
             # TODO: may want to clamp targ_dist_values to -1, 1
             np_targ_dist_probs = targ_dist_probs.detach().to(self.dev_cpu).numpy()
             np_targ_dist_values = targ_dist_values.detach().to(self.dev_cpu).numpy()
             np_proj_targ_dist_probs = categorical_projection(self.v_min, self.v_max, self.num_atoms, np_targ_dist_probs, np_targ_dist_values)
-            # print("np_proj_targ_dist_probs: ", np_proj_targ_dist_probs[0])
+            # print("np_proj_targ_dist_probs: ", np_proj_targ_dist_probs)
+            # print("np_proj_targ_dist_probs sums: ", np.sum(np_proj_targ_dist_probs, axis=-1))
             proj_targ_dist_probs = torch.from_numpy(np_proj_targ_dist_probs).float().to(self.dev_gpu)
             # print("proj_targ_dist_probs nan: ", torch.isnan(proj_targ_dist_probs).any())
             # the loss is calculated as cross-entropy, according to Appendix A
@@ -82,7 +83,7 @@ class D4PG:
             start_states = torch.from_numpy(np_start_states).float().to(self.dev_gpu)
             start_actions = torch.from_numpy(np_start_actions).float().to(self.dev_gpu)
             distq_loss = tnn.BCELoss(reduction='none')(tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1)), -1), proj_targ_dist_probs.detach())
-            priorities = torch.from_numpy(np_priorities).float().to(self.dev_gpu)
+            # priorities = torch.from_numpy(np_priorities).float().to(self.dev_gpu)
             distq_loss = torch.sum(distq_loss, -1)
             distq_loss = torch.mean(distq_loss) # * priorities)
             # distq_loss = torch.sum(proj_targ_dist_probs.detach() * tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1)), -1), axis=-1)
@@ -101,7 +102,7 @@ class D4PG:
             policy_out = self.policynet(start_states)
             # print("policy_out nan: ", torch.isnan(policy_out).any())
             distq_out = self.distqnet(torch.cat((start_states, policy_out), -1))
-            policy_loss = -torch.mean(torch.sum(distq_out * self.distq_values, -1))
+            policy_loss = -torch.mean(torch.sum(distq_out * self.distq_values, -1)) # maximize expected q-value
             # print("policy_loss nan: ", torch.isnan(policy_loss).any())
             
             # update policy-network
