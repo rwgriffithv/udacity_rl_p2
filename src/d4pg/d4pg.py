@@ -15,7 +15,8 @@ from .nn import categorical_projection
 
 class D4PG:
     def __init__(self, policynet, distqnet, target_policynet, target_distqnet, replay_buf, sample_size, v_min, v_max, num_atoms, \
-        policynet_lr=0.0003, distqnet_lr=0.0001, discount_factor=0.99, polyak_factor=0.99, max_grad_norm=1.0, regularization_factor=0.00001):
+        policynet_lr=0.0003, distqnet_lr=0.0001, discount_factor=0.99, polyak_factor=0.99, max_grad_norm=1.0, regularization_factor=0.00001, \
+        priority_scaling=True):
         
         self.policynet = policynet
         self.distqnet = distqnet # distributional Q-network (/critic/value-function)
@@ -28,6 +29,7 @@ class D4PG:
         self.num_atoms = num_atoms # number of logits output by distributional Q-network
         self.raw_discount_factor = discount_factor # used in numpy computations
         self.max_grad_norm = max_grad_norm
+        self.priority_scaling = priority_scaling
         
         # initialize target network weights
         polyak_update(self.policynet, self.target_policynet, 0)
@@ -82,12 +84,11 @@ class D4PG:
             start_actions = torch.from_numpy(np_start_actions).float().to(self.dev_gpu)
             distq_probs = tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1)), -1)
             distq_loss = torch.sum(tnn.BCELoss(reduction="none")(distq_probs, proj_targ_dist_probs), axis=-1)
-            np_scaled_priorities = 1 / (self.replay_buf.get_num_samples() * np_priorities)
-            priorities = torch.from_numpy(np_scaled_priorities).float().to(self.dev_gpu)
-            distq_loss = torch.mean(distq_loss * priorities)
-            if torch.isnan(distq_loss).any():
-                print("ERROR: distq_loss contains NaNs, exiting")
-                exit(1)
+            if self.priority_scaling:
+                np_scaled_priorities = 1 / (self.replay_buf.get_num_samples() * np_priorities)
+                priorities = torch.from_numpy(np_scaled_priorities).float().to(self.dev_gpu)
+                distq_loss *= priorities
+            distq_loss = torch.mean(distq_loss)
 
             # update distributional q-network
             self.distq_optimizer.zero_grad() # zero/clear previous gradients
@@ -102,9 +103,6 @@ class D4PG:
             distq_probs = tnn.functional.softmax(self.distqnet(torch.cat((start_states, policy_out), -1)), -1)
             expectedq = torch.sum(distq_probs * self.distq_values, -1)
             policy_loss = -torch.mean(expectedq) # maximize expected q-value
-            if torch.isnan(policy_loss).any():
-                print("ERROR: policy_loss contains NaNs, exiting")
-                exit(1)
             
             # update policy-network
             self.policy_optimizer.zero_grad()
@@ -118,7 +116,8 @@ class D4PG:
                 # print("np_priorities: ", np_priorities)
                 # print("np_scaled_priorities: ", np_scaled_priorities)
                 print("num samples in buffer: %d" % self.replay_buf.get_num_samples())
-                print("np_scaled_priorities mean: ", np.mean(np_scaled_priorities))
+                if self.priority_scaling:
+                    print("np_scaled_priorities mean: ", np.mean(np_scaled_priorities))
                 print("policy distq_probs: ", distq_probs.detach().to(self.dev_cpu).numpy()[0])
                 print("expectedq: ", expectedq.detach().to(self.dev_cpu).numpy()[0])
                 print("distq_loss: %f,\tpolicy_loss: %f" % (distq_loss.detach().to(self.dev_cpu).numpy(), policy_loss.detach().to(self.dev_cpu).numpy()))

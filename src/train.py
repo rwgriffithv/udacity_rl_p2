@@ -16,28 +16,29 @@ def train(executable_path):
     MAX_NUM_EPISODES = 1000 # must solve environment before this
     REQ_AVG_SCORE = 30
     # training constants
-    REPBUF_TRAJ_CAPCITY = 500 # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
-    REPBUF_TRAN_PER_TRAJ = 501 # must match ceil(environment's true length / K) (K defined below)
-    SAMPLE_TRAJ_LENGTH = 2 # number of consecutive transitions that are taken as a sample from the replay buffer
-    NUM_ATOMS = 8 # number of discrete distribution points for distributional Q-network to learn
+    REPBUF_TRAJ_CAPCITY = int(1e3) # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
+    REPBUF_TRAN_PER_TRAJ = 1001 # must match ceil(environment's true length / K) (K defined below)
+    SAMPLE_TRAJ_LENGTH = 5 # number of consecutive transitions that are taken as a sample from the replay buffer
+    NUM_ATOMS = 12 # number of discrete distribution points for distributional Q-network to learn
     V_MIN = 1e-5 # minimum value for distrbutional Q-network, non-zero to avoid zero policy gradient coefficients
-    V_MAX = 0.12 # maximum value for distrbutional Q-network
-    POLICY_LR = 0.0003 # small due to frequency of gradient steps
-    DISTQ_LR = 0.0003 # small due to frequency of gradient steps
+    V_MAX = 0.1 # maximum value for distrbutional Q-network
+    POLICY_LR = 0.0001 # small due to frequency of gradient steps
+    DISTQ_LR = 0.0001 # small due to frequency of gradient steps
     DISCOUNT_FACTOR = 0.5 # should inversely correlate with SAMPLE_TRAJ_LENGTH
-    POLYAK_FACTOR = 0.99 # large due to frequency of gradient steps
+    POLYAK_FACTOR = 0.975 # large due to frequency of gradient steps
     MAX_GRAD_NORM = 1.0
     REGULARIZATION_FACTOR = 1e-5
     NUM_GRAD_STEPS_PER_UPDATE = 1
     BATCH_SIZE = 128
-    K = 2 # number of simulation steps per RL algorithm step (taken from DeepQ)
+    K = 1 # number of simulation steps per RL algorithm step (taken from DeepQ)
     EPSILON_MIN = 0.05
     EPSILON_MAX = 0.5
-    EPSILON_DECAY = 0.975
+    EPSILON_DECAY = 0.95
     PRIORITY_MIN = 0.0001 / BATCH_SIZE
     PRIORITY_MAX = 0.01 / BATCH_SIZE
     PRIOIRTY_DECAY = 0.999
     PRIORITY_REWARD_FACTOR = 10
+    APPLY_PRIORITY_SCALING = False
     
     # instantiate environment
     env = UnityEnvironment(file_name=executable_path)
@@ -61,7 +62,7 @@ def train(executable_path):
 
     # training using Distributed Distributional Deep Deterministic Policy Gradient (D4PG)
     d4pg = D4PG(policy, distq, target_policy, target_distq, replay_buf, SAMPLE_TRAJ_LENGTH, V_MIN, V_MAX, NUM_ATOMS, \
-        POLICY_LR, DISTQ_LR, DISCOUNT_FACTOR, POLYAK_FACTOR, MAX_GRAD_NORM, REGULARIZATION_FACTOR)
+        POLICY_LR, DISTQ_LR, DISCOUNT_FACTOR, POLYAK_FACTOR, MAX_GRAD_NORM, REGULARIZATION_FACTOR, APPLY_PRIORITY_SCALING)
     scores_history = [] # list of arrays of sums of rewards for each agent throughout an episode
     scores_averages = [] # list of average of rewards across all agents through an episode, used to determine if the agent has solved the environment
     epsilon = EPSILON_MAX
