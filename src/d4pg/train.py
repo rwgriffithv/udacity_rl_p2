@@ -18,18 +18,18 @@ def train(executable_path):
     # training constants
     REPBUF_TRAJ_CAPCITY = 500 # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
     REPBUF_TRAN_PER_TRAJ = 501 # must match ceil(environment's true length / K) (K defined below)
-    SAMPLE_TRAJ_LENGTH = 25 # number of consecutive transitions that are taken as a sample from the replay buffer
-    NUM_ATOMS = 24 # number of discrete distribution points for distributional Q-network to learn
+    SAMPLE_TRAJ_LENGTH = 2 # number of consecutive transitions that are taken as a sample from the replay buffer
+    NUM_ATOMS = 8 # number of discrete distribution points for distributional Q-network to learn
     V_MIN = 1e-5 # minimum value for distrbutional Q-network, non-zero to avoid zero policy gradient coefficients
-    V_MAX = 0.2 # maximum value for distrbutional Q-network
-    POLICY_LR = 0.0001 # small due to frequency of gradient steps
-    DISTQ_LR = 0.0001 # small due to frequency of gradient steps
-    DISCOUNT_FACTOR = 0.75 # should inversely correlate with SAMPLE_TRAJ_LENGTH
+    V_MAX = 0.12 # maximum value for distrbutional Q-network
+    POLICY_LR = 0.0003 # small due to frequency of gradient steps
+    DISTQ_LR = 0.0003 # small due to frequency of gradient steps
+    DISCOUNT_FACTOR = 0.5 # should inversely correlate with SAMPLE_TRAJ_LENGTH
     POLYAK_FACTOR = 0.99 # large due to frequency of gradient steps
     MAX_GRAD_NORM = 1.0
     REGULARIZATION_FACTOR = 1e-5
     NUM_GRAD_STEPS_PER_UPDATE = 1
-    BATCH_SIZE = 1028
+    BATCH_SIZE = 128
     K = 2 # number of simulation steps per RL algorithm step (taken from DeepQ)
     EPSILON_MIN = 0.05
     EPSILON_MAX = 0.5
