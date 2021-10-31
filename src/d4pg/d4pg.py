@@ -14,7 +14,9 @@ from .nn import categorical_projection
 
 
 class D4PG:
-    def __init__(self, policynet, distqnet, target_policynet, target_distqnet, replay_buf, sample_size, v_min, v_max, num_atoms, policynet_lr=0.0003, distqnet_lr=0.0001, discount_factor=0.99, polyak_factor=0.99):
+    def __init__(self, policynet, distqnet, target_policynet, target_distqnet, replay_buf, sample_size, v_min, v_max, num_atoms, \
+        policynet_lr=0.0003, distqnet_lr=0.0001, discount_factor=0.99, polyak_factor=0.99, max_grad_norm=1.0, regularization_factor=0.00001):
+        
         self.policynet = policynet
         self.distqnet = distqnet # distributional Q-network (/critic/value-function)
         self.target_policynet = target_policynet
@@ -25,12 +27,14 @@ class D4PG:
         self.v_max = v_max # maximum value in output Q distributions
         self.num_atoms = num_atoms # number of logits output by distributional Q-network
         self.raw_discount_factor = discount_factor # used in numpy computations
+        self.max_grad_norm = max_grad_norm
+        
         # initialize target network weights
         polyak_update(self.policynet, self.target_policynet, 0)
         polyak_update(self.distqnet, self.target_distqnet, 0)
         # initialize optimizers
-        self.policy_optimizer = topt.Adam(policynet.parameters(), policynet_lr)
-        self.distq_optimizer = topt.Adam(distqnet.parameters(), distqnet_lr)
+        self.policy_optimizer = topt.Adam(self.policynet.parameters(), lr=policynet_lr, weight_decay=regularization_factor)
+        self.distq_optimizer = topt.Adam(self.distqnet.parameters(), lr=distqnet_lr, weight_decay=regularization_factor)
         # get devices
         self.dev_gpu = torch.device("cuda" if tcuda.is_available() else "cpu")
         self.dev_cpu = torch.device("cpu")
@@ -47,14 +51,11 @@ class D4PG:
 
     def optimize(self, num_steps, num_samples):
         for _ in range(num_steps): # number of gradient steps
-            # get sample batch, convert numpy arrays to tensors and send to GPU
+            # get sample batch
             batch_tuple = self.replay_buf.sample(num_samples)
             if batch_tuple is None:
-                # print("Skipping optimization due to shallow replay buffer...")
                 return
             np_states, np_actions, np_rewards, np_terminals, np_priorities = batch_tuple
-            # TODO: may want to clamp rewards to -1, 1
-            # torch.clamp(rewards, min=-1.0, max=1.0)
             
             # calculate distributional q-network loss
             self.distqnet.train(True) # ensure qnet is training so back propogation can occur
@@ -80,11 +81,10 @@ class D4PG:
             start_states = torch.from_numpy(np_start_states).float().to(self.dev_gpu)
             start_actions = torch.from_numpy(np_start_actions).float().to(self.dev_gpu)
             distq_probs = tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1)), -1)
-            distq_loss = tnn.BCELoss(reduction='none')(distq_probs, proj_targ_dist_probs.detach())
+            distq_loss = torch.sum(proj_targ_dist_probs * distq_probs, axis=-1)
             np_scaled_priorities = 1 / (self.replay_buf.get_num_samples() * np_priorities)
             priorities = torch.from_numpy(np_scaled_priorities).float().to(self.dev_gpu)
-            distq_loss = torch.sum(distq_loss, -1) * priorities
-            distq_loss = torch.mean(distq_loss)
+            distq_loss = torch.mean(distq_loss * priorities)
             if torch.isnan(distq_loss).any():
                 print("ERROR: distq_loss contains NaNs, exiting")
                 exit(1)
@@ -92,6 +92,7 @@ class D4PG:
             # update distributional q-network
             self.distq_optimizer.zero_grad() # zero/clear previous gradients
             distq_loss.backward()
+            tnn.utils.clip_grad_norm_(self.distqnet.parameters(), self.max_grad_norm)
             self.distq_optimizer.step()
             self.distqnet.train(False)
             
@@ -108,6 +109,7 @@ class D4PG:
             # update policy-network
             self.policy_optimizer.zero_grad()
             policy_loss.backward()
+            tnn.utils.clip_grad_norm_(self.policynet.parameters(), self.max_grad_norm)
             self.policy_optimizer.step()
             self.policynet.train(False)
             
@@ -131,7 +133,7 @@ class D4PG:
         policy_in = torch.from_numpy(np.array(states)).float().to(self.dev_gpu) # convert state, state can be numpy array or list
         self.policynet.train(False)
         with torch.no_grad():
-            actions = torch.tanh(self.policynet(policy_in)).to(self.dev_cpu).numpy()
+            actions = torch.tanh(self.policynet(policy_in)).detach().to(self.dev_cpu).numpy()
         # epsilon noise
         noise = epsilon * (2 * self.np_rng.random((len(states), actions.shape[1])) - (1 + actions))
         return actions + noise

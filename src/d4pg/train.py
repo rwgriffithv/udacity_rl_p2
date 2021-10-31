@@ -16,20 +16,22 @@ def train(executable_path):
     MAX_NUM_EPISODES = 1000 # must solve environment before this
     REQ_AVG_SCORE = 30
     # training constants
-    REPBUF_TRAJ_CAPCITY = 200 # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
+    REPBUF_TRAJ_CAPCITY = 500 # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
     REPBUF_TRAN_PER_TRAJ = 501 # must match ceil(environment's true length / K) (K defined below)
     SAMPLE_TRAJ_LENGTH = 5 # number of consecutive transitions that are taken as a sample from the replay buffer
-    NUM_ATOMS = 24 # number of discrete distribution points for distributional Q-network to learn
-    V_MIN = 1e-7 # minimum value for distrbutional Q-network, non-zero to avoid zero policy gradient coefficients
-    V_MAX = 0.1 # maximum value for distrbutional Q-network
+    NUM_ATOMS = 12 # number of discrete distribution points for distributional Q-network to learn
+    V_MIN = 1e-5 # minimum value for distrbutional Q-network, non-zero to avoid zero policy gradient coefficients
+    V_MAX = 0.12 # maximum value for distrbutional Q-network
     POLICY_LR = 0.0001 # small due to frequency of gradient steps
     DISTQ_LR = 0.0001 # small due to frequency of gradient steps
     DISCOUNT_FACTOR = 0.5 # should inversely correlate with SAMPLE_TRAJ_LENGTH
     POLYAK_FACTOR = 0.99 # large due to frequency of gradient steps
-    NUM_GRAD_STEPS_PER_UPDATE = 2
-    BATCH_SIZE = 256
+    MAX_GRAD_NORM = 1.0
+    REGULARIZATION_FACTOR = 1e-5
+    NUM_GRAD_STEPS_PER_UPDATE = 1
+    BATCH_SIZE = 128
     K = 2 # number of simulation steps per RL algorithm step (taken from DeepQ)
-    EPSILON_MIN = 0.01
+    EPSILON_MIN = 0.05
     EPSILON_MAX = 1.0
     EPSILON_DECAY = 0.95
     PRIORITY_MIN = 0.0001 / BATCH_SIZE
@@ -58,7 +60,7 @@ def train(executable_path):
     replay_buf = ConsecutiveReplayBuffer(REPBUF_TRAJ_CAPCITY, REPBUF_TRAN_PER_TRAJ, SAMPLE_TRAJ_LENGTH, state_size, action_size)
 
     # training using Distributed Distributional Deep Deterministic Policy Gradient (D4PG)
-    d4pg = D4PG(policy, distq, target_policy, target_distq, replay_buf, SAMPLE_TRAJ_LENGTH, V_MIN, V_MAX, NUM_ATOMS, POLICY_LR, DISTQ_LR, DISCOUNT_FACTOR, POLYAK_FACTOR)
+    d4pg = D4PG(policy, distq, target_policy, target_distq, replay_buf, SAMPLE_TRAJ_LENGTH, V_MIN, V_MAX, NUM_ATOMS, POLICY_LR, DISTQ_LR, DISCOUNT_FACTOR, POLYAK_FACTOR, MAX_GRAD_NORM, REGULARIZATION_FACTOR)
     scores_history = [] # list of arrays of sums of rewards for each agent throughout an episode
     scores_averages = [] # list of average of rewards across all agents through an episode, used to determine if the agent has solved the environment
     epsilon = EPSILON_MAX
