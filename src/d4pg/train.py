@@ -16,14 +16,14 @@ def train(executable_path):
     MAX_NUM_EPISODES = 1000 # must solve environment before this
     REQ_AVG_SCORE = 30
     # training constants
-    REPBUF_TRAJ_CAPCITY = int(1e3) # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
+    REPBUF_TRAJ_CAPCITY = 1000 # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
     REPBUF_TRAN_PER_TRAJ = 1001 # must match ceil(environment's true length / K) (K defined below)
     SAMPLE_TRAJ_LENGTH = 5 # number of consecutive transitions that are taken as a sample from the replay buffer
     NUM_ATOMS = 12 # number of discrete distribution points for distributional Q-network to learn
     V_MIN = 1e-5 # minimum value for distrbutional Q-network, non-zero to avoid zero policy gradient coefficients
     V_MAX = 0.1 # maximum value for distrbutional Q-network
-    POLICY_LR = 0.0001 # small due to frequency of gradient steps
-    DISTQ_LR = 0.0001 # small due to frequency of gradient steps
+    POLICY_LR = 0.0003 # small due to frequency of gradient steps
+    DISTQ_LR = 0.0003 # small due to frequency of gradient steps
     DISCOUNT_FACTOR = 0.5 # should inversely correlate with SAMPLE_TRAJ_LENGTH
     POLYAK_FACTOR = 0.975 # large due to frequency of gradient steps
     MAX_GRAD_NORM = 1.0
