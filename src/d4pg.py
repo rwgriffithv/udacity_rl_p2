@@ -50,7 +50,7 @@ class D4PG:
         self.dbg_print_period = 100
 
     def optimize(self, num_steps, num_samples):
-        for _ in range(num_steps): # number of gradient steps
+        for i in range(num_steps): # number of gradient steps
             # get sample batch
             batch_tuple = self.replay_buf.sample(num_samples)
             if batch_tuple is None:
@@ -81,7 +81,7 @@ class D4PG:
             start_states = torch.from_numpy(np_start_states).float().to(self.dev_gpu)
             start_actions = torch.from_numpy(np_start_actions).float().to(self.dev_gpu)
             distq_probs = tnn.functional.softmax(self.distqnet(torch.cat((start_states, start_actions), -1)), -1)
-            distq_loss = torch.sum(proj_targ_dist_probs * distq_probs, axis=-1)
+            distq_loss = torch.sum(tnn.BCELoss(reduction="none")(distq_probs, proj_targ_dist_probs), axis=-1)
             np_scaled_priorities = 1 / (self.replay_buf.get_num_samples() * np_priorities)
             priorities = torch.from_numpy(np_scaled_priorities).float().to(self.dev_gpu)
             distq_loss = torch.mean(distq_loss * priorities)
@@ -113,7 +113,7 @@ class D4PG:
             self.policy_optimizer.step()
             self.policynet.train(False)
             
-            if self.dbg_print_counter == 0:
+            if self.dbg_print_counter == 0 and i == 0:
                 print("\n")
                 # print("np_priorities: ", np_priorities)
                 # print("np_scaled_priorities: ", np_scaled_priorities)
@@ -123,11 +123,11 @@ class D4PG:
                 print("expectedq: ", expectedq.detach().to(self.dev_cpu).numpy()[0])
                 print("distq_loss: %f,\tpolicy_loss: %f" % (distq_loss.detach().to(self.dev_cpu).numpy(), policy_loss.detach().to(self.dev_cpu).numpy()))
                 print("\n")
-            self.dbg_print_counter = (self.dbg_print_counter + 1) % self.dbg_print_period
             
         # polyak update target networks
         polyak_update(self.distqnet, self.target_distqnet, self.polyak_factor)
         polyak_update(self.policynet, self.target_policynet, self.polyak_factor)
+        self.dbg_print_counter = (self.dbg_print_counter + 1) % self.dbg_print_period
 
     def get_actions(self, states, epsilon=0.0):
         policy_in = torch.from_numpy(np.array(states)).float().to(self.dev_gpu) # convert state, state can be numpy array or list
