@@ -80,115 +80,122 @@ value *v<sub>i</sub>* that atom *i* represents is then *i* * (*V<sub>max</sub>* 
 __E__ *Z<sub>&omega;</sub>*(*s*, *a*) is then simply calculated by __&Sigma;__<sub>*i*</sub> *p<sub>i</sub>* *v<sub>i</sub>* and used in the policy loss the same  
 *Q*(*s*, *a*) is used. The loss used to calculate the gradients applied to *&omega;* however is more  
 involved and is the binary cross entropy of the output *p<sub>i</sub>* probabilities from *Z<sub>&omega;</sub>*(*s*, *a*)<br>
-and the categorical projection of the sum of a set of discounted consecutive recorded rewards *R*<br>
-and the output *p<sub>i</sub>* probabilities of a target critic network *Z<sub>&omega;__'__</sub>*(*s*__'__, *&pi;<sub>&theta;__'__</sub>*(*s*__'__)). The details of  
-the categorical projection can be found in Appendix A of the paper, and my  
-implementation found in `src/nn.py`.
+and the categorical projection of the sum of a set of discounted consecutive recorded  
+rewards *R* and the output *p<sub>i</sub>* probabilities of a target critic network *Z<sub>&omega;__'__</sub>*(*s*__'__, *&pi;<sub>&theta;__'__</sub>*(*s*__'__)). The  
+details of the categorical projection can be found in Appendix A of the paper and  
+perhaps clarified by my implementation found in `src/nn.py`. The replay buffer  
+implemented in `src/replay.py` meets the functional requirements of D4PG; namely  
+prioritized experience replay and the ability to sample consecutive sets of transtions  
+as needed by the critic loss calculation. The gradient steps  applied to both *&theta;* and *&omega;*<br>
+within `src/d4pg.py` are exactly as described within the paper, with the only  
+modifications being that the scaling applied to the critic gradient  from the weights of  
+each sample within the batch is able to be toggled, and standard practical  
+augmentations like gradient norm clipping as well as weight regularization are applied.  
+Polyak updates to the target actor and critic network weights, *&theta;__'__* and *&omega;__'__* respectively,  
+are applied and not further discussed due to such a discussion being redundant to those  
+familiar with Deep Q-Learning.
 
+As for the "distributed" aspect of D4PG, it is arguably not a core part of the  
+algorithm despite it being the first "D" in its name (which is presumably a significant  
+reason why Udacity recommends D4PG be used with version 2 of this project). The  
+actor and critic network architectures and gradients are not in any way related to  
+there being multiple agents using copies of the actor network in parallel environments  
+to collect state transition information. This use of parallel, non-interacting agents is  
+seemingly applicable to all off-policy deep reinforcement learning algorithms as a  
+means to more efficiently collect more state transition information, but it is described  
+within this paper as an integral part of D4PG, and it is applied within my code in  
+`src/train.py` (not in `src/d4pg.py` since it has nothing to do with the gradient steps  
+or way the networks function).
 
+Noise *&epsilon;* is applied to the output actions from *&pi;*(*s*) before being executed in the simulation.  
+Due to all logits of the policy output being bound within [-1, 1], *&epsilon;* is applied as a scaling  
+factor to a distribution from [*b*, *c*] such that -1 <= *b* <= 0 <= *c* <= 1 and the probability  
+mass from [*b*, 0] equals that from [0, *c*] and for logit *a<sub>i</sub>* of action *a*, *b* = -1 - *a<sub>i</sub>* and  
+*c* = 1 - *a<sub>i</sub>*.
 
-"distributed" aspect of it. During training, some positive non-zero integer  
-number of agents will be executing actions the fundamental idea is to  
-estimate the action-value function by using the Bellman equation in iterative  
-updates. The optimal action-value function is denoted by _Q*(s,a)_, where *s*  
-is a state and *a* is an action. The learned action-value function estimator  
-*Q<sub>&theta;</sub>(s,a)* is parameterized by *&theta;*. In Deep Q-Learning, *Q<sub>&theta;</sub>(s,a)* is a neural network that  
-learns to approximate _Q*_(*s,a*) through gradient descent updates to network  
-weights/parameters *&theta;*. This neural network action-vaue approximator is  
-referred to as a Q-network (`qnet` in the code). The Bellman equation  
-_Q*_(*s,a*) = **E**<sub>s'</sub>[*r* + *&gamma;* max<sub>*a'*</sub> _Q*_(*s',a'*)] is used to produce that target optimal value of  
-_Q*_(*s,a*) for a given "transition" (*s,a,r,t,s'*) (state, action, reward, next state) that  
-encodes the information of an agent's experience of a given time step. The value  
-_Q*_(*s',a'*) is estimated by a target delayed Q-network *Q<sub>&theta;'</sub>*(*s',a'*) (`target_qnet` in the  
-code) that shares the same structure as *Q<sub>&theta;</sub>* but uses parameters *&theta;'* that are  
-equal to a previous iteration of parameters *&theta;*. Through many simulations,  
-transitions are collected in a replay buffer and randomly sampled to perform  
-updates to the Q-network by minimizing the difference between *Q<sub>&theta;</sub>*(*s,a*) and the  
-Bellman-equation-computed _Q*_(*s,a*) (using *Q<sub>&theta;'</sub>*(*s',a'*)) for all sampled transitions. This  
-minimization is performed by computing the gradient of a selected loss function  
-with respect to Q-network parameters *&theta;*. A simple example of such a loss function is  
-"Mean-Squared-Error": &nbsp; **E**<sub>*s,a,r,s'*</sub>(*Q<sub>&theta;</sub>*(*s,a*) - **E**<sub>s'</sub>[*r* + *&gamma;* max<sub>*a'*</sub> *Q<sub>&theta;'</sub>*(*s',a'*)])<sup>2</sup>. &nbsp;
+To nearly guarantee stability and potentially improve training time, while the mean of the  
+mean agent score taken over a certain number of the most recent episodes is greater than  
+or equal to the required score of +30, gradient steps are not performed on either *&theta;* or *&omega;*.<br>
+The number of episodes is configurable, and this functionality may be disabled. The ability  
+to take *K* steps within the environment and record that as one state transition, as done in  
+Deep Q-Learning, is also applied here. The weights (priorities or probablities) of state  
+transitions inserted into the replay buffer are increased by a factor as well if that transition  
+has significant reward (which in this case is any non-zero reward) in order to help aleviate  
+some of the issues that an environment with sparse rewards has (as this environment does  
+befor the agent can perform well at all). All of these minor training functionality  
+augmentations are found in `src/train.py`.
 
-My implementation of the replay buffer has slight modifications from the buffer  
-in the paper, as a new transition is not guaranteed to be inserted if the  
-buffer is full (it is logically inserted and then randomly selected to be removed  
-so the buffer does not exceed its capacity). Similarly, when randomly sampling  
-from the buffer, transitions are sampled with replacement. This allows early  
-training iterations, performed upon a nearly empty replay buffer with transitions  
-taken with many random actions, to have higher sample-efficiency and extract  
-information from these more exploratory actions while they are still in the  
-buffer and not unlikely to be sampled. The replay buffer capacity used is 1e6.
+Hyperparameter values used during the reported training run are given here:
+* *K*: **1**
+* *&theta;* learning rate: **0.0001**
+* *&omega;* learning rate: **0.0002**
+* reward discount factor *&gamma;*: **0.5**
+* polyak factor *&tau;*: **0.95**
+* maximum gradient norm: **1.0**
+* regularization factor: **1e-5**
+* buffer capacity (episodes): **1000**
+* number of consecutive transitions per sample | *R* | : **5**
+* number of *Z* atoms *l*: **12**
+* *V<sub>min</sub>*: **1e-5** (avoids negative policy gradients, unlike 0)
+* *V<sub>max</sub>*: **0.1**
+* (mini) batch size: **128**
+* *&epsilon;<sub>min</sub>*: **0.05**
+* *&epsilon;<sub>max</sub>*: **1.0**
+* *&epsilon;* decay: **0.975**
+* transition priority (probability) min: **0.0001 / 128**
+* transition priority (probability max: **0.01 / 128**
+* transition priority decay: **0.999**
+* priority reward scaling factor: **10**
+* number of previous episodes checked to prevent training: **10**
 
-The gradient step implemented within `DeepQ` is exactly as defined within the  
-paper; minimizing the exact same loss. The target action-value network  
-(`target_qnet` in the code) is updated using polyak averaging however, where the  
-network parameters *&theta;'* are updated as a weighted average of themselves and the  
-parameters *&theta;* from the updating action-value network (`qnet` in the code). In the  
-paper the target action-value network was instead updated by simply setting its  
-parameters equal to those of a previous iteration of the updating action-value  
-network. This change helps prevent the difference between the two action-value  
-networks from approaching zero, as is possible if model updates are small and  
-the target action-value network's parameters are updated frequently. The polyak  
-factor *&tau;* used is 0.995, where *&theta;'* = *&tau;* * *&theta;'* + (1 - *&tau;*) * *&theta;*.
-
-Two more small changes not specified in the Deep Q-Learning paper were made, one  
-of which was to clamp transition rewards to fit within the range [-1, 1] during training  
-so as to provide more regular reward inputs that simplify the optimal _Q*(s,a)_ that the  
-training *Q<sub>&theta;</sub>* is training to approximate without changing which action the action-value  
-function should learn to prefer for such transitions with clamped/clipped rewards. The  
-other small change was to implement a form of *&epsilon;* "refreshing" that can occur once the  
-minimum *&epsilon;* value is reached after annealing. *&epsilon;* is "refreshed" to the small value of  
-0.05 (5% random actions) to encourage exploration and hopefully contribute to escaping  
-the current local maxima. Once the minimum *&epsilon;* value, 0.01, is reached either originally  
-or after refreshing, a maximum average score is maintained over the past 100 scores.  
-If the agent is stuck in a local maxima and is unable to improve rewards for 100 episodes  
-or if the agent's average score over the past 100 episodes is less than the current  
-maximum average score by more than 0.5, then *&epsilon;* is refreshed in this way. This was a very  
-useful feature when my hyperparameters were not tuned as well, however in my final  
-training run I did not make use of this feature as none of the above conditions were ever  
-met and the agent did not get stuck in a local maxima. The episode length of 100 used  
-for these various hyperparameters concerning *&epsilon;* refreshing is chosen to match the length  
-of the score window used to determine if the environment is solved to be analagous to  
-the average score metric that we are primarily concerned with.
-
-Hyperparameters used during training that have not been mentioned above are included  
-here:
-* *Q<sub>&theta;</sub>* learning rate: **0.0003** (small due to frequency of gradient steps)
-* discount factor *&gamma;*: **1**
-* (mini) batch size: **128** (chosen to be larger than in the Deep Q-Learning paper to help stability)
-* *&epsilon;* max: **1.0**
-* *&epsilon;* decay: **0.99** (*&epsilon;<sub>t+1</sub>* = 0.99 * *&epsilon;<sub>t</sub>*)
-* *K* (number of simulation steps per algorithm step, see paper): **2**
-
-The neural network architecture used for the Q-function *Q<sub>&theta;</sub>* (and *Q<sub>&theta;'</sub>*) is a sequential multilayer  
-perceptron with layers only consisting of "linear" layers and ReLU activation layers.  
+The neural network architecture used for the critic and policy networks, as well as  
+the target critic and policy networks, is a sequential multilayer perceptron with  
+layers only consisting of "linear" layers and ReLU activation layers. The main  
+difference between the two, is that the output logits from the policy networks<br>
+*&pi;<sub>&theta;</sub>* and *&pi;<sub>&theta;__'__</sub>* have the hyperbolic tangent activation function applied to their ouput  
+while the critic networks *Z<sub>&omega;</sub>* and *Z<sub>&omega;__'__</sub>* have the softmax activation function applied.  
+These activation functions are only applied to the outputs of the networks during  
+use in `src/d4pg.py`, so they will be omitted from the structures described below,  
+which correspond to the model definitions in `src/nn.py`.<br>
 Each linear layer is comprised of parameters "weights" *w* and "biases" *b*, where  
 given an input *i* the layer outputs _w*i + b_ where the weights and the input must  
 match their final and first dimensions respectively, and the biases are added  
-by an elementwise broadcast along the final dimensions of _w*i_. The layer order used  
-is provided as follows:
-* Linear layer with weights of shape (37, 128), biases of shape (128,)
-* ReLU activation layer
+by an elementwise broadcast along the final dimensions of _w*i_.<br>
+
+The layer order for the policy networks *&pi;<sub>&theta;</sub>* and *&pi;<sub>&theta;__'__</sub>* are as follows:
+* Linear layer with weights of shape (33, 128), biases of shape (128,)
+* LeakyReLU activation layer (0.01 slope for x < 0)
 * Linear layer with weights of shape (128, 128), biases of shape (128,)
-* ReLU activation layer
+* LeakyReLU activation layer (0.01 slope for x < 0)
 * Linear layer with weights of shape (128, 4), biases of shape (4,)
 
+The layer order for the critic networks *Z<sub>&omega;</sub>* and *Z<sub>&omega;__'__</sub>* are as follows:
+* Linear layer with weights of shape (37, 256), biases of shape (256,)
+* LeakyReLU activation layer (0.01 slope for x < 0)
+* Linear layer with weights of shape (256, 128), biases of shape (128,)
+* LeakyReLU activation layer (0.01 slope for x < 0)
+* Linear layer with weights of shape (128, 4), biases of shape (*l*=12,)
+
 ## Plot of Rewards
-![reward plots](./model/plot.png)
+![reward plots](./model/scores.png)
+<br>
+It took a total of 166 episodes to "solve" the environment.  
+(176 if you include 10 non-training episodes for buffer prefilling)
 
 
 ## Ideas for Future Work
 
-I am particularly interested in continuous actions reinforcement learning algorithms, and  
-I have implemented Soft Actor Critic and applied it to my current work as an AI software  
-engineer. It would be interesting to try to apply the learned temperature variable in the  
-Soft Actor Critic algorithm to a discrete action algorithm like Deep Q-Learning or Vanilla  
-Policy Gradient and see how they perform in a simple environment like this. I essentially  
-tried to mimic the functionality of the temperature variable with my somewhat hacky *&epsilon;*  
-"refreshing" implementation here.
-
-I was also planning on implementing [Double Deep Q-Learning (van Hasselt et al., 2015)](https://arxiv.org/pdf/1509.06461.pdf)  
-and potentially [Prioritized Experience Replay (Schaul et al., 2016)](https://arxiv.org/pdf/1511.05952.pdf) if for some reason I was  
-to be unsuccesful in using only Deep Q-Learning. This need (thankfully) did not arise, so it  
-remains as potential future work to at least compare the performance of each of these  
-techniques.
+The performance of the algorithm during training is very sensitive to the state transitions  
+sampled from the replay buffer, and due to the sparse nature of the rewards at the beginning  
+of training, I find that it is not uncommon for the alogrithm to struggle sometimes if given  
+a "bad seed" where it does not see much reward at all and learns some initial behavior that  
+is later dificult to correct, or at least makes training take longer. I would ideally like  
+to apply a scaling factor to the critic and policy gradients that decreases in magnitude as  
+the ratio of episodes with little to no rewards increases. Additonally, taking some of the  
+temperature learning from Soft Actor Critic to encourage exploration may be a suitable  
+solution as well, although it would certaily complicate the loss calculations. Something more  
+simple like learning two critic networks (like Double Deep Q-Learning) may help avoid issues  
+with stability, which may be a more serious issue I noticed than the training starting slower  
+than I would like. These all seem like valid contributions to make to what I have produced,  
+and if this near-vanilla implementation of D4PG didn't perform well enough I may have explored  
+them.

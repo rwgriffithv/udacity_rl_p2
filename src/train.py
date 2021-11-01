@@ -16,12 +16,14 @@ def train(executable_path):
     MAX_NUM_EPISODES = 1000 # must solve environment before this
     REQ_AVG_SCORE = 30 # mean agent espisode score requirement for environment to be solved
     NUM_PREV_SCORES_REQ = 100 # number of previous mean agent episode scores to average against REG_AVG_SCORE
-    NUM_PREV_SCORES_TRAIN = 10 # number of previous mean agent episode scores to check to see if training should occur, None if check should not be made to stop training early
+    NUM_PREV_SCORES_TRAIN = None # number of previous mean agent episode scores to check to see if training should occur, 0, None, False, etc. if check should not be made to stop training early
     NUM_EPISODES_UNTIL_TRAIN = 10 # number of startup episodes used to prefill the replay buffer before training, not included in final output
+    NUM_ENVIRONMENT_STEPS = 1001 # user-input required, number of steps in environment
     # training constants
+    K = 1 # number of simulation steps per RL algorithm step (taken from DeepQ, not very effective in this environment)
     REPBUF_TRAJ_CAPCITY = 1000 # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
-    REPBUF_TRAN_PER_TRAJ = 1001 # must match ceil(environment's true length / K) (K defined below)
-    SAMPLE_TRAJ_LENGTH = 10 # number of consecutive transitions that are taken as a sample from the replay buffer
+    REPBUF_TRAN_PER_TRAJ = int(np.ceil(NUM_ENVIRONMENT_STEPS / K)) # number of transitions per trajectory
+    SAMPLE_TRAJ_LENGTH = 5 # number of consecutive transitions that are taken as a sample from the replay buffer
     NUM_ATOMS = 12 # number of discrete distribution points for distributional Q-network to learn
     V_MIN = 1e-5 # minimum value for distrbutional Q-network, non-zero to avoid zero policy gradient coefficients
     V_MAX = 0.1 # maximum value for distrbutional Q-network
@@ -34,7 +36,6 @@ def train(executable_path):
     APPLY_PRIORITY_SCALING = False # whether priority of samples used is factored into critic loss
     NUM_GRAD_STEPS_PER_UPDATE = 1 # number of gradient steps taken per model update through "optimize" function call
     BATCH_SIZE = 128 # number of samples used per model update
-    K = 1 # number of simulation steps per RL algorithm step (taken from DeepQ, not very effective in this environment)
     EPSILON_MIN = 0.05 # minimum noise
     EPSILON_MAX = 1.0 # maximum noise
     EPSILON_DECAY = 0.975 # noise decay
@@ -73,7 +74,7 @@ def train(executable_path):
     print("\n\ntraining (K=%d, PLR=%f, QLR=%f, BS=%d, ED=%f) ...." % (K, POLICY_LR, DISTQ_LR, BATCH_SIZE, EPSILON_DECAY))
     while len(scores_averages) < MAX_NUM_EPISODES + NUM_EPISODES_UNTIL_TRAIN:
         num_prev_scores_train = 0 if NUM_PREV_SCORES_TRAIN is None else min(NUM_PREV_SCORES_TRAIN, len(scores_averages))
-        training = (len(scores_averages) > NUM_EPISODES_UNTIL_TRAIN) and ((sum(scores_averages[-num_prev_scores_train:]) / max(num_prev_scores_train, 1)) < REQ_AVG_SCORE)
+        training = (len(scores_averages) >= NUM_EPISODES_UNTIL_TRAIN) and ((sum(scores_averages[len(scores_averages) -num_prev_scores_train:]) / max(num_prev_scores_train, 1)) < REQ_AVG_SCORE)
         distq_losses, policy_losses = np.zeros(NUM_GRAD_STEPS_PER_UPDATE), np.zeros(NUM_GRAD_STEPS_PER_UPDATE)
         
         scores = np.zeros(num_agents)
@@ -103,22 +104,27 @@ def train(executable_path):
                 end_states = env_info.vector_observations
                 replay_buf.append_end_states(end_states)
                 break
-        # check for environment being solved
+        
+        # print monitoring information and check for environment being solved
         for s_h, s in zip(scores_history, scores):
             s_h.append(s)
         scores_averages.append(np.mean(scores))
-        num_prev_scores = min(NUM_PREV_SCORES_REQ, len(scores_averages))
-        avg_score = sum(scores_averages[-num_prev_scores:]) / num_prev_scores
-        print("\nepisode %d:" % len(scores_averages) - 1)
-        print("noise:                          %f" % (len(scores_averages) - 1, epsilon))
+        n = len(scores_averages)
+        num_prev_scores = min(NUM_PREV_SCORES_REQ, max(0, n - NUM_EPISODES_UNTIL_TRAIN))
+        avg_score = sum(scores_averages[-num_prev_scores:]) / max(num_prev_scores, 1) # mean of mean agent scores across NUM_PREV_SCORES_REQ
+        print("\nEPISODE %d:" % n)
+        print("noise:                          %f" % epsilon)
+        print("buffer samples:                 %d" % replay_buf.get_num_samples())
         if training:
-            print("mean loss (distq, policy):  (%f, %f)" % (np.mean(distq_losses), np.mean(policy_losses)))
+            print("mean loss (distq, policy):      (%f, %f)" % (np.mean(distq_losses) / NUM_ENVIRONMENT_STEPS, np.mean(policy_losses) / NUM_ENVIRONMENT_STEPS))
         print("average score:                  %f" % scores_averages[-1])
-        print("average score for eps [%d, %d): %f" % avg_score)
+        if num_prev_scores != 0:
+            print("average score for eps [%d, %d]: %f" % (n - num_prev_scores + 1, n, avg_score))
+        
         if avg_score > REQ_AVG_SCORE:
             break
-        epsilon = max(epsilon * EPSILON_DECAY, EPSILON_MIN)
         if training:
+            epsilon = max(epsilon * EPSILON_DECAY, EPSILON_MIN)
             priority = max(priority * PRIOIRTY_DECAY, PRIORITY_MIN)
 
     env.close()
