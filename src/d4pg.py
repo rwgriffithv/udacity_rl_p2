@@ -134,11 +134,9 @@ class D4PG:
         with torch.no_grad():
             actions = torch.tanh(self.policynet(policy_in)).detach().to(self.dev_cpu).numpy()
         # epsilon noise
-        pos_mask = self.np_rng.random((len(states), actions.shape[1])) < 0.5
+        noise = 2 * self.np_rng.random((len(states), actions.shape[1])) - 1
+        pos_mask = noise >= 0
         neg_mask = ~pos_mask
-        noise = self.np_rng.random((len(states), actions.shape[1]))
         noise[pos_mask] *= 1 - actions[pos_mask]
-        noise[neg_mask] *= -1 - actions[neg_mask]
-        epsilon_noise = epsilon * noise
-        noisy_actions = actions + epsilon_noise
-        return noisy_actions
+        noise[neg_mask] *= 1 + actions[neg_mask]
+        return actions + (epsilon * noise)

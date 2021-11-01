@@ -70,7 +70,6 @@ def train(executable_path):
     scores_averages = [] # list of average of rewards across all agents through an episode, used to determine if the agent has solved the environment
     epsilon = EPSILON_MAX
     priority = PRIORITY_MAX
-    max_avg_score = int(-1e6)
     print("\n\ntraining (K=%d, PLR=%f, QLR=%f, BS=%d, ED=%f) ...." % (K, POLICY_LR, DISTQ_LR, BATCH_SIZE, EPSILON_DECAY))
     while len(scores_averages) < MAX_NUM_EPISODES + NUM_EPISODES_UNTIL_TRAIN:
         num_prev_scores_train = min(NUM_PREV_SCORES_TRAIN, len(scores_averages))
@@ -115,9 +114,8 @@ def train(executable_path):
         print("")
         if avg_score > REQ_AVG_SCORE:
             break
-        max_avg_score = max(max_avg_score, avg_score)
+        epsilon = max(epsilon * EPSILON_DECAY, EPSILON_MIN)
         if training:
-            epsilon = max(epsilon * EPSILON_DECAY, EPSILON_MIN)
             priority = max(priority * PRIOIRTY_DECAY, PRIORITY_MIN)
 
     env.close()
