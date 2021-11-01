@@ -15,25 +15,28 @@ def train(executable_path):
     # environment solution constants
     MAX_NUM_EPISODES = 1000 # must solve environment before this
     REQ_AVG_SCORE = 30
+    NUM_PREV_SCORES_REQ = 100
+    NUM_PREV_SCORES_TRAIN = 10
+    NUM_EPISODES_UNTIL_TRAIN = 10
     # training constants
     REPBUF_TRAJ_CAPCITY = 1000 # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
     REPBUF_TRAN_PER_TRAJ = 1001 # must match ceil(environment's true length / K) (K defined below)
-    SAMPLE_TRAJ_LENGTH = 5 # number of consecutive transitions that are taken as a sample from the replay buffer
+    SAMPLE_TRAJ_LENGTH = 10 # number of consecutive transitions that are taken as a sample from the replay buffer
     NUM_ATOMS = 12 # number of discrete distribution points for distributional Q-network to learn
     V_MIN = 1e-5 # minimum value for distrbutional Q-network, non-zero to avoid zero policy gradient coefficients
     V_MAX = 0.1 # maximum value for distrbutional Q-network
-    POLICY_LR = 0.0003 # small due to frequency of gradient steps
-    DISTQ_LR = 0.0003 # small due to frequency of gradient steps
+    POLICY_LR = 0.0001 # small due to frequency of gradient steps
+    DISTQ_LR = 0.0002 # small due to frequency of gradient steps
     DISCOUNT_FACTOR = 0.5 # should inversely correlate with SAMPLE_TRAJ_LENGTH
-    POLYAK_FACTOR = 0.975 # large due to frequency of gradient steps
+    POLYAK_FACTOR = 0.95 # large due to frequency of gradient steps
     MAX_GRAD_NORM = 1.0
     REGULARIZATION_FACTOR = 1e-5
     NUM_GRAD_STEPS_PER_UPDATE = 1
     BATCH_SIZE = 128
     K = 1 # number of simulation steps per RL algorithm step (taken from DeepQ)
     EPSILON_MIN = 0.05
-    EPSILON_MAX = 0.5
-    EPSILON_DECAY = 0.95
+    EPSILON_MAX = 1.0
+    EPSILON_DECAY = 0.975
     PRIORITY_MIN = 0.0001 / BATCH_SIZE
     PRIORITY_MAX = 0.01 / BATCH_SIZE
     PRIOIRTY_DECAY = 0.999
@@ -63,13 +66,16 @@ def train(executable_path):
     # training using Distributed Distributional Deep Deterministic Policy Gradient (D4PG)
     d4pg = D4PG(policy, distq, target_policy, target_distq, replay_buf, SAMPLE_TRAJ_LENGTH, V_MIN, V_MAX, NUM_ATOMS, \
         POLICY_LR, DISTQ_LR, DISCOUNT_FACTOR, POLYAK_FACTOR, MAX_GRAD_NORM, REGULARIZATION_FACTOR, APPLY_PRIORITY_SCALING)
-    scores_history = [] # list of arrays of sums of rewards for each agent throughout an episode
+    scores_history = [[] for _ in range(num_agents)] # list of num_agents lists of episode rewards sums (one list per agent)
     scores_averages = [] # list of average of rewards across all agents through an episode, used to determine if the agent has solved the environment
     epsilon = EPSILON_MAX
     priority = PRIORITY_MAX
     max_avg_score = int(-1e6)
     print("\n\ntraining (K=%d, PLR=%f, QLR=%f, BS=%d, ED=%f) ...." % (K, POLICY_LR, DISTQ_LR, BATCH_SIZE, EPSILON_DECAY))
-    while len(scores_averages) < MAX_NUM_EPISODES:
+    while len(scores_averages) < MAX_NUM_EPISODES + NUM_EPISODES_UNTIL_TRAIN:
+        num_prev_scores_train = min(NUM_PREV_SCORES_TRAIN, len(scores_averages))
+        training = (len(scores_averages) > NUM_EPISODES_UNTIL_TRAIN) and ((sum(scores_averages[-num_prev_scores_train:]) / max(num_prev_scores_train, 1)) < REQ_AVG_SCORE)
+        
         scores = np.zeros(num_agents)
         env_info = env.reset(train_mode=True)[brain_name]
         terminals = np.zeros(num_agents) # environment does not have a true end point where the agent will receive no more rewards
@@ -88,31 +94,40 @@ def train(executable_path):
             priorities = np.full(num_agents, priority / num_agents)
             priorities[prf_mask] *= PRIORITY_REWARD_FACTOR
             replay_buf.insert_transitions(priorities, states, actions, rewards, terminals)
-            d4pg.optimize(NUM_GRAD_STEPS_PER_UPDATE, BATCH_SIZE)
+            if training:
+                d4pg.optimize(NUM_GRAD_STEPS_PER_UPDATE, BATCH_SIZE)
             scores += rewards # accumulate score
             if done:
                 end_states = env_info.vector_observations
                 replay_buf.append_end_states(end_states)
                 break
         # check for environment being solved
-        scores_history.append(scores)
+        for s_h, s in zip(scores_history, scores):
+            s_h.append(s)
         scores_averages.append(np.mean(scores))
-        num_prev_scores = min(100, len(scores_averages))
+        num_prev_scores = min(NUM_PREV_SCORES_REQ, len(scores_averages))
         avg_score = sum(scores_averages[-num_prev_scores:]) / num_prev_scores
-        print("\raverage score for episodes [%d, %d):\t%f" % (len(scores_averages) - num_prev_scores, len(scores_averages), avg_score), end="")
+        # print("\raverage score for episodes [%d, %d):\t%f" % (len(scores_averages) - num_prev_scores, len(scores_averages), avg_score), end="")
+        print("\n\n")
+        print("noise for episode %d:               \t%f" % (len(scores_averages) - 1, epsilon))
+        print("average score for episode %d:       \t%f" % (len(scores_averages) - 1, scores_averages[-1]))
+        print("average score for episodes [%d, %d):\t%f" % (len(scores_averages) - num_prev_scores, len(scores_averages), avg_score))
+        print("")
         if avg_score > REQ_AVG_SCORE:
             break
         max_avg_score = max(max_avg_score, avg_score)
-        epsilon = max(epsilon * EPSILON_DECAY, EPSILON_MIN)
-        priority = max(priority * PRIOIRTY_DECAY, PRIORITY_MIN)
+        if training:
+            epsilon = max(epsilon * EPSILON_DECAY, EPSILON_MIN)
+            priority = max(priority * PRIOIRTY_DECAY, PRIORITY_MIN)
 
     env.close()
     # save models and plot final rewards curve
     print("\n\nenvironment solved, saving model to qnet.pt and scores to scores.csv")
     with open("scores.csv", "w") as f:
-        f.write(str(scores_history.flatten())[1:-1])
-    with open("scores_avg.csv" "w") as f:
-        f.write(str(scores_averages)[1:-1])
+        for s_h in scores_history:
+            f.write(str(s_h[NUM_EPISODES_UNTIL_TRAIN:])[1:-1] + "\n")
+    with open("scores_avg.csv", "w") as f:
+        f.write(str(scores_averages[NUM_EPISODES_UNTIL_TRAIN:])[1:-1])
     save(policy.state_dict(), "policy.pt")
     save(distq.state_dict(), "distq.pt")
 

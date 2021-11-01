@@ -1,5 +1,6 @@
 # Distributed Distributional Deep Deterministic Policy Gradient (D4PG) (G. Barth-Maron et al.)
 
+from operator import pos
 from random import sample
 from numpy.lib.type_check import _nan_to_num_dispatcher
 import torch
@@ -49,7 +50,7 @@ class D4PG:
         # for random action noise
         self.np_rng = np.random.default_rng()
         self.dbg_print_counter = 0
-        self.dbg_print_period = 100
+        self.dbg_print_period = 250
 
     def optimize(self, num_steps, num_samples):
         for i in range(num_steps): # number of gradient steps
@@ -121,7 +122,6 @@ class D4PG:
                 print("policy distq_probs: ", distq_probs.detach().to(self.dev_cpu).numpy()[0])
                 print("expectedq: ", expectedq.detach().to(self.dev_cpu).numpy()[0])
                 print("distq_loss: %f,\tpolicy_loss: %f" % (distq_loss.detach().to(self.dev_cpu).numpy(), policy_loss.detach().to(self.dev_cpu).numpy()))
-                print("\n")
             
         # polyak update target networks
         polyak_update(self.distqnet, self.target_distqnet, self.polyak_factor)
@@ -134,5 +134,11 @@ class D4PG:
         with torch.no_grad():
             actions = torch.tanh(self.policynet(policy_in)).detach().to(self.dev_cpu).numpy()
         # epsilon noise
-        noise = epsilon * (2 * self.np_rng.random((len(states), actions.shape[1])) - (1 + actions))
-        return actions + noise
+        pos_mask = self.np_rng.random((len(states), actions.shape[1])) < 0.5
+        neg_mask = ~pos_mask
+        noise = self.np_rng.random((len(states), actions.shape[1]))
+        noise[pos_mask] *= 1 - actions[pos_mask]
+        noise[neg_mask] *= -1 - actions[neg_mask]
+        epsilon_noise = epsilon * noise
+        noisy_actions = actions + epsilon_noise
+        return noisy_actions
