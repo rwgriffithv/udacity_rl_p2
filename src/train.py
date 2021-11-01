@@ -14,10 +14,10 @@ from .d4pg import D4PG
 def train(executable_path):
     # environment solution constants
     MAX_NUM_EPISODES = 1000 # must solve environment before this
-    REQ_AVG_SCORE = 30
-    NUM_PREV_SCORES_REQ = 100
-    NUM_PREV_SCORES_TRAIN = 10
-    NUM_EPISODES_UNTIL_TRAIN = 10
+    REQ_AVG_SCORE = 30 # mean agent espisode score requirement for environment to be solved
+    NUM_PREV_SCORES_REQ = 100 # number of previous mean agent episode scores to average against REG_AVG_SCORE
+    NUM_PREV_SCORES_TRAIN = 10 # number of previous mean agent episode scores to check to see if training should occur, None if check should not be made to stop training early
+    NUM_EPISODES_UNTIL_TRAIN = 10 # number of startup episodes used to prefill the replay buffer before training, not included in final output
     # training constants
     REPBUF_TRAJ_CAPCITY = 1000 # actual number of samples within buffer is ~REPBUF_TRAN_PER_TRAJ times larger
     REPBUF_TRAN_PER_TRAJ = 1001 # must match ceil(environment's true length / K) (K defined below)
@@ -29,19 +29,19 @@ def train(executable_path):
     DISTQ_LR = 0.0002 # small due to frequency of gradient steps
     DISCOUNT_FACTOR = 0.5 # should inversely correlate with SAMPLE_TRAJ_LENGTH
     POLYAK_FACTOR = 0.95 # large due to frequency of gradient steps
-    MAX_GRAD_NORM = 1.0
-    REGULARIZATION_FACTOR = 1e-5
-    NUM_GRAD_STEPS_PER_UPDATE = 1
-    BATCH_SIZE = 128
-    K = 1 # number of simulation steps per RL algorithm step (taken from DeepQ)
-    EPSILON_MIN = 0.05
-    EPSILON_MAX = 1.0
-    EPSILON_DECAY = 0.975
-    PRIORITY_MIN = 0.0001 / BATCH_SIZE
-    PRIORITY_MAX = 0.01 / BATCH_SIZE
-    PRIOIRTY_DECAY = 0.999
-    PRIORITY_REWARD_FACTOR = 10
-    APPLY_PRIORITY_SCALING = False
+    MAX_GRAD_NORM = 1.0 # maximum gradient norm
+    REGULARIZATION_FACTOR = 1e-5 # regularization factor applied to actor and critic weights
+    APPLY_PRIORITY_SCALING = False # whether priority of samples used is factored into critic loss
+    NUM_GRAD_STEPS_PER_UPDATE = 1 # number of gradient steps taken per model update through "optimize" function call
+    BATCH_SIZE = 128 # number of samples used per model update
+    K = 1 # number of simulation steps per RL algorithm step (taken from DeepQ, not very effective in this environment)
+    EPSILON_MIN = 0.05 # minimum noise
+    EPSILON_MAX = 1.0 # maximum noise
+    EPSILON_DECAY = 0.975 # noise decay
+    PRIORITY_MIN = 0.0001 / BATCH_SIZE # minimum probability of a recently inserted transition to be sampled from replay buffer
+    PRIORITY_MAX = 0.01 / BATCH_SIZE # maximum probability of a recently inserted transition to be sampled from replay buffer
+    PRIOIRTY_DECAY = 0.999 # decay of sample probability
+    PRIORITY_REWARD_FACTOR = 10 # factor sample probability is multiplied by if sample has favorable rewards (helps with initially sparse rewards environment)
     
     # instantiate environment
     env = UnityEnvironment(file_name=executable_path)
@@ -72,8 +72,9 @@ def train(executable_path):
     priority = PRIORITY_MAX
     print("\n\ntraining (K=%d, PLR=%f, QLR=%f, BS=%d, ED=%f) ...." % (K, POLICY_LR, DISTQ_LR, BATCH_SIZE, EPSILON_DECAY))
     while len(scores_averages) < MAX_NUM_EPISODES + NUM_EPISODES_UNTIL_TRAIN:
-        num_prev_scores_train = min(NUM_PREV_SCORES_TRAIN, len(scores_averages))
+        num_prev_scores_train = 0 if NUM_PREV_SCORES_TRAIN is None else min(NUM_PREV_SCORES_TRAIN, len(scores_averages))
         training = (len(scores_averages) > NUM_EPISODES_UNTIL_TRAIN) and ((sum(scores_averages[-num_prev_scores_train:]) / max(num_prev_scores_train, 1)) < REQ_AVG_SCORE)
+        distq_losses, policy_losses = np.zeros(NUM_GRAD_STEPS_PER_UPDATE), np.zeros(NUM_GRAD_STEPS_PER_UPDATE)
         
         scores = np.zeros(num_agents)
         env_info = env.reset(train_mode=True)[brain_name]
@@ -94,7 +95,9 @@ def train(executable_path):
             priorities[prf_mask] *= PRIORITY_REWARD_FACTOR
             replay_buf.insert_transitions(priorities, states, actions, rewards, terminals)
             if training:
-                d4pg.optimize(NUM_GRAD_STEPS_PER_UPDATE, BATCH_SIZE)
+                d_l, p_l = d4pg.optimize(NUM_GRAD_STEPS_PER_UPDATE, BATCH_SIZE)
+                distq_losses += d_l
+                policy_losses += p_l
             scores += rewards # accumulate score
             if done:
                 end_states = env_info.vector_observations
@@ -106,12 +109,12 @@ def train(executable_path):
         scores_averages.append(np.mean(scores))
         num_prev_scores = min(NUM_PREV_SCORES_REQ, len(scores_averages))
         avg_score = sum(scores_averages[-num_prev_scores:]) / num_prev_scores
-        # print("\raverage score for episodes [%d, %d):\t%f" % (len(scores_averages) - num_prev_scores, len(scores_averages), avg_score), end="")
-        print("\n\n")
-        print("noise for episode %d:               \t%f" % (len(scores_averages) - 1, epsilon))
-        print("average score for episode %d:       \t%f" % (len(scores_averages) - 1, scores_averages[-1]))
-        print("average score for episodes [%d, %d):\t%f" % (len(scores_averages) - num_prev_scores, len(scores_averages), avg_score))
-        print("")
+        print("\nepisode %d:" % len(scores_averages) - 1)
+        print("noise:                          %f" % (len(scores_averages) - 1, epsilon))
+        if training:
+            print("mean loss (distq, policy):  (%f, %f)" % (np.mean(distq_losses), np.mean(policy_losses)))
+        print("average score:                  %f" % scores_averages[-1])
+        print("average score for eps [%d, %d): %f" % avg_score)
         if avg_score > REQ_AVG_SCORE:
             break
         epsilon = max(epsilon * EPSILON_DECAY, EPSILON_MIN)

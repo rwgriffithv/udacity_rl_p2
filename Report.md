@@ -1,44 +1,94 @@
-# Udacity Deep Reinforcement Learning Project 1 Report
+# Udacity Deep Reinforcement Learning<br>Project 2 Version 2 Report
 Robert Griffith  
-4 June 2021
+31 October 2021
 
 
 ## Project Description
 
-The goal of this project was to use deep reinforcement learning algorithms to  
-train an agent to navigate and collect bananas in a provided UnityEnvironment  
-following the architecture of the open-source Unity plugin **Unity Machine  
-Learning Agents (ML-Agents)**. The Banana Collector environment is provided  
-by Udacity, and is a modified version of one of the environments in the  
-ML-Agents [GitHub repository](https://github.com/Unity-Technologies/ml-agents).
+The goal of version 2 of this project was to use deep reinforcement learning  
+techniques for continuous action and state spaces to learn a policy that  
+provides an agent with continuous control over a double-jointed arm attempting  
+to move to target locations in a provided UnityEnvironment. This Reacher  
+environment is provided by Udacity and follows the architecture of the  
+open-source Unity plugin **Unity Machine Learning Agents (ML-Agents)**.<br>
+Version 2 specifically involves the use of deep reinforcement learning  
+techniques that make use of multiple (non-interacting, parallel) copies of the  
+same agent operating in parallel simulations to distribute the task of  
+gathering experience.
 
-The environment is relatively simple, with a continuous state with 37 dimensions  
-and a discrete action space with 4 actions. Agents are provided a reward of +1  
-for collecting a yellow banana while a blue banana yields a reward of -1. This  
-task is episodic, and the environment is considered "solved" upon the agent  
-earning an average score of +13 over 100 consecutive episodes.
+In this Reacher environment, an agent is provided a reward of +0.1 for each  
+timestep that the agent's "hand" is in the goal location. The state space that  
+the agent perceives to perform actions in the environment has 33 dimensions and  
+contains the position, rotoation, velocity, and angular velocities of the agent  
+arm. Each action has 4 dimensions corresponding to torque applicable to two  
+joints of the agent arm.
+
+This task is episodic, and the environment is considered "solved" upon the mean  
+earned agent score (taken over all 20 agents) averaged over 100 consecutive   
+episodes being greater than or equal to +30. An individual agent "score" for an  
+episode is the cumulative sum of that agent's reward from each time step in the  
+episode.
 
 In order to complete this project, not only does a deep reinforcement learning  
 algorithm need to be implemented, but a myriad of hyperparameters, neural  
-network model structures, and transition augmentations tailored to the Banana  
-Collector environment need to be explored and implemented as well.
+network model structures, and transition augmentations tailored to the Reacher  
+environment need to be explored and implemented as well.
 
-## Learning Algorithm - [Deep Q-Learning (Mnih et al., 2015)](https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf)
+## Learning Algorithm - [Distributed Distributional<br>Deterministic Policy Gradients (Barth-Maron et al., 2018)](https://arxiv.org/pdf/1804.08617.pdf)
 
-To "solve" the afformentioned environment, I hypothesized that it was simple  
-enough to solve using Deep Q-Learning at an even faster pace than shown as an  
-example in the Udacity project description. There it was shown that the  
-Udacity team's baseline Deep Q-Learning project solution could "solve" the  
-environment in ~1800 episodes. 
+I chose version 2 of this project so I could specifically apply an algorithm  
+other than DDPG and challenge myself more when in the pursuit of "solving" the  
+afformentioned environment (unlike in project 1 where I was content making minor  
+improvements to [Deep Q-Learning (Mnih et al., 2015)](https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf). For the purpose of brevity,  
+the following explanations assume familiarity with Deep Q-Learning and the core  
+deep reinforcement learning concepts described within its respective paper.
 
-In pursuit of this hypothosesis, I implemented the gradient step portion of the  
-Deep Q-Learning algorithm as well as the epsilon-greedy action portion within  
-the `DeepQ` class in `src/deepq.py`. The experience replay buffer used to store  
-and randomly sample transitions by the algorithm is implemented within the  
-`ReplayBuffer` class in `src/replay.py` using efficient random sampling and  
-insertions afforded by numpy arrays.
+In pursuit of a more complex algorithm, I chose to implement D4PG, as described  
+in the above-cited paper. I implemented the gradient step portions of the  
+algorithm for both the actor and critic networks, as well as the application of  
+random noise to the policy output within the `D4PG` class in `src/d4pq.py`. The  
+experience replay buffer used to store and randomly sample weighted transitions  
+(of with an arbitrary number of consecutive transitions after each sample) is  
+implemented within the `ConsecutiveReplayBuffer` class in `src/replay.py`.  
 
-To briefly summarize the Deep Q-Learning algorithm, the fundamental idea is to  
+To briefly summarize the D4PG algorithm, the first framework to describe is the  
+relationship between "actor" and "critic" networks. An "actor" network *&pi;<sub>&theta;</sub>*,<br>
+parameterized by traiable weights *&theta;*, produces continuous actions *a*  
+from state input *s* such that *&pi;<sub>&theta;</sub>*(*s*) = *a*. This is naturally used during execution  
+to produced the desired actions for a given agent. A "critic" network *Q<sub>&omega;</sub>*,<br>
+parameterized by trainable weights *&omega;*, is usually learning an action-value  
+function which takes some state *s* and executed action *a* as input and produces  
+a value *V* such that *Q<sub>&omega;</sub>*(*s*, *a*) = *V*. The loss minimized to compute the gradients  
+applied to *&omega;* is usually related to the difference between *V* and some recorded  
+reward *r* (or set of discounted rewards *R* and also target action-value function  
+*Q<sub>&omega;__'__</sub>* parameterized by trainable weights *&omega;__'__*) observed from the environment  
+upon executing action *a* from state *s*. The gradients applied to *&theta;* are taken from  
+minimizing the loss of -*Q<sub>&omega;</sub>*(*s*, *&pi;<sub>&theta;</sub>*(*s*)) such that the policy network is "encouraged"  
+to learn to map states to actions that yield higher value *V*.
+
+D4PG implements this classical actor-critic framework but applies an interesting  
+twist to the critic network. Instead of learing to map *s* and *a* to *V*, D4PG earns its  
+second D for "Distributional" by mapping *s* and *a* to a random variable such that  
+the distributional action-value function *Z* can be defined in relation to *V* and *Q*  
+as *Q*(*s*, *a*) = *V* = __E__ *Z*(*s*, *a*) where **E** is the expected value operator and *Z*(*s*, *a*)<br>
+returns a distribution from *V<sub>min</sub>* to *V<sub>max</sub>*. Thus in practice we train the critic network  
+*Z<sub>&omega;*, parameterized by traiable weights *&omega;*, which will have *l* output logits describing  
+the *l* discrete atoms of this discretized distribution. These final output logits have  
+a softmax activation function applied to them to get the probabilities of each atom,  
+where *p<sub>i</sub>* is the probability at atom *i* calculated from output logit *&omega;<sub>i</sub>*. The actual  
+value *v<sub>i</sub>* that atom *i* represents is then *i* * (*V<sub>max</sub>* - *V<sub>min</sub>*) / (*l* - 1).  
+__E__ *Z<sub>&omega;</sub>*(*s*, *a*) is then simply calculated by __&Sigma;__<sub>*i*</sub> *p<sub>i</sub>* *v<sub>i</sub>* and used in the policy loss the same  
+*Q*(*s*, *a*) is used. The loss used to calculate the gradients applied to *&omega;* however is more  
+involved and is the binary cross entropy of the output *p<sub>i</sub>* probabilities from *Z<sub>&omega;</sub>*(*s*, *a*)<br>
+and the categorical projection of the sum of a set of discounted consecutive recorded rewards *R*<br>
+and the output *p<sub>i</sub>* probabilities of a target critic network *Z<sub>&omega;__'__</sub>*(*s*__'__, *&pi;<sub>&theta;__'__</sub>*(*s*__'__)). The details of  
+the categorical projection can be found in Appendix A of the paper, and my  
+implementation found in `src/nn.py`.
+
+
+
+"distributed" aspect of it. During training, some positive non-zero integer  
+number of agents will be executing actions the fundamental idea is to  
 estimate the action-value function by using the Bellman equation in iterative  
 updates. The optimal action-value function is denoted by _Q*(s,a)_, where *s*  
 is a state and *a* is an action. The learned action-value function estimator  

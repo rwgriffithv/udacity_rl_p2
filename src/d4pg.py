@@ -49,10 +49,9 @@ class D4PG:
         self.distq_values = torch.from_numpy(np.array([v_min + i * value_delta for i in range(num_atoms)])).float().to(self.dev_gpu)
         # for random action noise
         self.np_rng = np.random.default_rng()
-        self.dbg_print_counter = 0
-        self.dbg_print_period = 250
 
     def optimize(self, num_steps, num_samples):
+        distq_losses, policy_losses = np.zeros(num_steps), np.zeros(num_steps)
         for i in range(num_steps): # number of gradient steps
             # get sample batch
             batch_tuple = self.replay_buf.sample(num_samples)
@@ -97,6 +96,7 @@ class D4PG:
             tnn.utils.clip_grad_norm_(self.distqnet.parameters(), self.max_grad_norm)
             self.distq_optimizer.step()
             self.distqnet.train(False)
+            distq_losses[i] = distq_loss.detach().to(self.dev_cpu).numpy()
             
             # calculate policy-network loss, simple average expected value from policy-output-actions at each starting state
             self.policynet.train(True)
@@ -111,22 +111,12 @@ class D4PG:
             tnn.utils.clip_grad_norm_(self.policynet.parameters(), self.max_grad_norm)
             self.policy_optimizer.step()
             self.policynet.train(False)
-            
-            if self.dbg_print_counter == 0 and i == 0:
-                print("\n")
-                # print("np_priorities: ", np_priorities)
-                # print("np_scaled_priorities: ", np_scaled_priorities)
-                print("num samples in buffer: %d" % self.replay_buf.get_num_samples())
-                if self.priority_scaling:
-                    print("np_scaled_priorities mean: ", np.mean(np_scaled_priorities))
-                print("policy distq_probs: ", distq_probs.detach().to(self.dev_cpu).numpy()[0])
-                print("expectedq: ", expectedq.detach().to(self.dev_cpu).numpy()[0])
-                print("distq_loss: %f,\tpolicy_loss: %f" % (distq_loss.detach().to(self.dev_cpu).numpy(), policy_loss.detach().to(self.dev_cpu).numpy()))
+            policy_losses[i] = policy_loss.detach().to(self.dev_cpu).numpy()
             
         # polyak update target networks
         polyak_update(self.distqnet, self.target_distqnet, self.polyak_factor)
         polyak_update(self.policynet, self.target_policynet, self.polyak_factor)
-        self.dbg_print_counter = (self.dbg_print_counter + 1) % self.dbg_print_period
+        return distq_losses, policy_losses
 
     def get_actions(self, states, epsilon=0.0):
         policy_in = torch.from_numpy(np.array(states)).float().to(self.dev_gpu) # convert state, state can be numpy array or list
