@@ -146,7 +146,7 @@ Hyperparameter values used during the reported training run are given here:
 * transition priority (probability max: **0.01 / 128**
 * transition priority decay: **0.999**
 * priority reward scaling factor: **10**
-* number of previous episodes checked to prevent training: **10**
+* number of previous episodes checked to prevent training: **None**
 
 The neural network architecture used for the critic and policy networks, as well as  
 the target critic and policy networks, is a sequential multilayer perceptron with  
@@ -179,8 +179,8 @@ The layer order for the critic networks *Z<sub>&omega;</sub>* and *Z<sub>&omega;
 ## Plot of Rewards
 ![reward plots](./model/scores.png)
 <br>
-It took a total of 166 episodes to "solve" the environment.  
-(176 if you include 10 non-training episodes for buffer prefilling)
+It took a total of 127 episodes to "solve" the environment.  
+(137 if you include 10 non-training episodes for buffer prefilling)
 
 
 ## Ideas for Future Work
